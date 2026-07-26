@@ -430,17 +430,22 @@ func newAuthStatusCommand() *cobra.Command {
 		Short: "查看认证状态",
 		Long: `查看当前或指定组织 profile 的认证状态。
 
-指定 --profile 时只读取并刷新被选中的 token slot，不会修改 currentProfile。`,
+指定 --profile 时只读取并刷新被选中的 token slot，不会修改 currentProfile。
+指定 --read-only 时严格只读被选中的 corp-scoped token，不刷新、不迁移、不修复认证状态。`,
 		Example: `  dws auth status
   dws auth status --profile <corpId>
   dws auth status --profile "钉钉"
-  dws auth status --profile <corpId> --format json`,
+  dws auth status --profile <corpId> --read-only --format json`,
 		DisableAutoGenTag: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			configDir := defaultConfigDir()
 			profileSelector, err := cmd.Flags().GetString("profile")
 			if err != nil {
 				return apperrors.NewInternal("failed to read --profile")
+			}
+			readOnly, err := cmd.Flags().GetBool("read-only")
+			if err != nil {
+				return apperrors.NewInternal("failed to read --read-only")
 			}
 			restoreProfile := pushRuntimeProfile(profileSelector)
 			defer restoreProfile()
@@ -449,30 +454,38 @@ func newAuthStatusCommand() *cobra.Command {
 			refreshed := false
 			var tokenData *authpkg.TokenData
 			var statusErr error
-			provider := authpkg.NewOAuthProvider(configDir, nil)
-			configureOAuthProviderCompatibility(provider, configDir)
-			if data, err := provider.Status(); err == nil {
-				tokenData = data
-				if !data.IsAccessTokenValid() && data.IsRefreshTokenValid() {
-					refreshCtx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
-					_, refreshErr := provider.GetAccessToken(refreshCtx)
-					cancel()
-					if refreshErr == nil {
-						if updatedData, statusErr := provider.Status(); statusErr == nil {
-							tokenData = updatedData
-							refreshed = true
-						}
-					} else if edition.Get().AutoPurgeToken {
-						_ = authpkg.DeleteTokenData(configDir)
-					} else if tokenData != nil {
-						_ = authpkg.MarkProfileStatus(configDir, tokenData.CorpID, authpkg.ProfileStatusExpired)
-					}
-				}
-				if authStatusAuthenticated(tokenData) {
-					authenticated = true
-				}
+			if readOnly {
+				tokenData, statusErr = authpkg.LoadTokenDataForProfileReadOnly(
+					configDir,
+					authpkg.RuntimeProfile(),
+				)
+				authenticated = authStatusAuthenticated(tokenData)
 			} else {
-				statusErr = err
+				provider := authpkg.NewOAuthProvider(configDir, nil)
+				configureOAuthProviderCompatibility(provider, configDir)
+				if data, err := provider.Status(); err == nil {
+					tokenData = data
+					if !data.IsAccessTokenValid() && data.IsRefreshTokenValid() {
+						refreshCtx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
+						_, refreshErr := provider.GetAccessToken(refreshCtx)
+						cancel()
+						if refreshErr == nil {
+							if updatedData, statusErr := provider.Status(); statusErr == nil {
+								tokenData = updatedData
+								refreshed = true
+							}
+						} else if edition.Get().AutoPurgeToken {
+							_ = authpkg.DeleteTokenData(configDir)
+						} else if tokenData != nil {
+							_ = authpkg.MarkProfileStatus(configDir, tokenData.CorpID, authpkg.ProfileStatusExpired)
+						}
+					}
+					if authStatusAuthenticated(tokenData) {
+						authenticated = true
+					}
+				} else {
+					statusErr = err
+				}
 			}
 			diagnostic := authStatusDiagnosticFromError(statusErr)
 
@@ -520,6 +533,7 @@ func newAuthStatusCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().String("profile", "", "指定要查看的 profile 名或 corpId")
+	cmd.Flags().Bool("read-only", false, "严格只读凭据，不刷新、不迁移、不修复认证状态")
 	return cmd
 }
 

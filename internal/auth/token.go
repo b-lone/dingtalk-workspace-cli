@@ -218,6 +218,49 @@ func LoadTokenDataForProfile(configDir, profile string) (*TokenData, error) {
 	return data, nil
 }
 
+// LoadTokenDataForProfileReadOnly decrypts the selected profile token without
+// refreshing it, migrating legacy state, repairing metadata, or changing the
+// current profile. It intentionally has no legacy token fallback: callers get
+// the identity stored in the selected corp-scoped credential slot or an error.
+func LoadTokenDataForProfileReadOnly(configDir, profile string) (*TokenData, error) {
+	if h := edition.Get(); h.LoadToken != nil {
+		if strings.TrimSpace(profile) != "" {
+			return nil, fmt.Errorf("profile selection is not supported by the current auth backend")
+		}
+		jsonData, err := h.LoadToken(configDir)
+		if err != nil {
+			return nil, err
+		}
+		var td TokenData
+		if err := json.Unmarshal(jsonData, &td); err != nil {
+			return nil, fmt.Errorf("parsing token data from hook: %w", err)
+		}
+		return &td, nil
+	}
+
+	cfg, err := LoadProfilesReadOnly(configDir)
+	if err != nil {
+		return nil, err
+	}
+	selector := strings.TrimSpace(profile)
+	var selected *Profile
+	if selector != "" {
+		selected = findProfile(cfg, selector)
+		if selected == nil {
+			return nil, fmt.Errorf("profile %q not found", selector)
+		}
+	} else {
+		selected = findProfile(cfg, cfg.CurrentProfile)
+		if selected == nil {
+			selected = findProfile(cfg, cfg.PrimaryProfile)
+		}
+	}
+	if selected == nil {
+		return nil, ErrTokenDataNotFound
+	}
+	return LoadTokenDataKeychainForCorpID(selected.CorpID)
+}
+
 // DeleteTokenData removes token data. When an edition hook (DeleteToken) is
 // registered, it delegates entirely to the hook; otherwise it falls back
 // to keychain + legacy cleanup.

@@ -133,7 +133,6 @@ func newCommandRunnerWithFlags(loader cli.CatalogLoader, flags *GlobalFlags) exe
 		httpClient = &http.Client{Timeout: time.Duration(flags.Timeout) * time.Second}
 	}
 	transportClient := transport.NewClient(httpClient)
-	transportClient.ExtraHeaders = resolveIdentityHeaders()
 	transportClient.FileLogger = FileLoggerInstance()
 	return &runtimeRunner{
 		loader:             loader,
@@ -143,7 +142,6 @@ func newCommandRunnerWithFlags(loader cli.CatalogLoader, flags *GlobalFlags) exe
 		scanner:            newRuntimeContentScanner(),
 		enforceContentScan: runtimeFlagEnabled(os.Getenv(runtimeContentScanEnforceEnv), false),
 		includeScanReport:  runtimeFlagEnabled(os.Getenv(runtimeContentScanReportOutputEnv), false),
-		auditSink:          setupAuditSink(),
 	}
 }
 
@@ -156,6 +154,7 @@ type runtimeRunner struct {
 	enforceContentScan bool
 	includeScanReport  bool
 	auditSink          audit.Sink
+	runtimeInitOnce    sync.Once
 }
 
 func (r *runtimeRunner) Run(ctx context.Context, invocation executor.Invocation) (executor.Result, error) {
@@ -171,6 +170,14 @@ func (r *runtimeRunner) Run(ctx context.Context, invocation executor.Invocation)
 	if r == nil {
 		return executor.Result{}, fmt.Errorf("runtime runner is not configured")
 	}
+	r.runtimeInitOnce.Do(func() {
+		if r.auditSink == nil {
+			r.auditSink = setupAuditSink()
+		}
+		if r.transport != nil {
+			r.transport.ExtraHeaders = resolveIdentityHeaders()
+		}
+	})
 	// Emit the one-shot host-owned PAT decision log. Placed here (not in
 	// the constructor) so it fires AFTER PersistentPreRunE has configured
 	// slog level per --debug / --verbose. The Once guard makes repeat
@@ -192,8 +199,6 @@ func (r *runtimeRunner) runSingle(ctx context.Context, invocation executor.Invoc
 	if r.loader == nil || r.transport == nil {
 		return r.fallback.Run(ctx, invocation)
 	}
-	r.transport.ExtraHeaders = resolveIdentityHeaders()
-
 	// Mock mode: skip catalog validation, use a placeholder endpoint.
 	if r.globalFlags != nil && r.globalFlags.Mock {
 		endpoint := fmt.Sprintf("https://mock-mcp-%s.dingtalk.com", invocation.CanonicalProduct)

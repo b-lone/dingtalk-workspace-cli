@@ -48,6 +48,7 @@ import (
 type outputFileContextKey struct{}
 
 const recoveryEventStderrPrefix = "RECOVERY_EVENT_ID="
+const disablePluginsEnv = "DWS_DISABLE_PLUGINS"
 
 // Execute runs the root command and returns the process exit code.
 func Execute() (exitCode int) {
@@ -298,7 +299,9 @@ func NewRootCommandWithEngine(rootCtx context.Context, engine *pipeline.Engine) 
 	loader := cli.EnvironmentLoader{
 		LookupEnv: os.LookupEnv,
 	}
+	pluginsDisabled := os.Getenv(disablePluginsEnv) == "1"
 	runner := newCommandRunnerWithFlags(loader, flags)
+	var loadedPlugins []*plugin.Plugin
 
 	root := &cobra.Command{
 		Use:               "dws",
@@ -322,8 +325,11 @@ func NewRootCommandWithEngine(rootCtx context.Context, engine *pipeline.Engine) 
 				authpkg.SetClientSecret(flags.ClientSecret)
 			}
 
-			// Configure global slog level based on --debug / --verbose flags.
-			configureLogLevel(flags)
+			if !isReadOnlyAuthStatusCommand(cmd) {
+				// Configure global slog level based on --debug / --verbose flags.
+				configureLogLevel(flags)
+				plugin.SyncSkills(loadedPlugins)
+			}
 
 			if err := configureOutputSink(cmd); err != nil {
 				return err
@@ -374,9 +380,12 @@ func NewRootCommandWithEngine(rootCtx context.Context, engine *pipeline.Engine) 
 
 	// --- Plugin loading: runs AFTER legacy commands so plugin endpoints can
 	// be appended on top of the static endpoint registry.
-	pluginCmds := loadPlugins(engine, runner)
-	if len(pluginCmds) > 0 {
-		addPluginCommandsSafe(root, pluginCmds)
+	if !pluginsDisabled {
+		pluginCmds, plugins := loadPlugins(engine, runner)
+		loadedPlugins = plugins
+		if len(pluginCmds) > 0 {
+			addPluginCommandsSafe(root, pluginCmds)
+		}
 	}
 
 	// PAT authorization commands (open-source core)
@@ -394,6 +403,14 @@ func NewRootCommandWithEngine(rootCtx context.Context, engine *pipeline.Engine) 
 	root.SetContext(rootCtx)
 
 	return root
+}
+
+func isReadOnlyAuthStatusCommand(cmd *cobra.Command) bool {
+	if cmd == nil || cmd.Name() != "status" || cmd.Parent() == nil || cmd.Parent().Name() != "auth" {
+		return false
+	}
+	readOnly, err := cmd.Flags().GetBool("read-only")
+	return err == nil && readOnly
 }
 
 func preparseProfileFlag(args []string) string {
@@ -768,7 +785,7 @@ func CloseFileLogger() {
 // loadPlugins registers versioned plugin manifests, stdio clients, hooks, and
 // skills. It deliberately does not initialize MCP transports or call
 // tools/list while constructing the command tree.
-func loadPlugins(engine *pipeline.Engine, _ executor.Runner) []*cobra.Command {
+func loadPlugins(engine *pipeline.Engine, _ executor.Runner) ([]*cobra.Command, []*plugin.Plugin) {
 	pluginLoader := plugin.NewLoader(RawVersion())
 
 	// 0a. Inject plugin config values from settings.json as environment
@@ -778,7 +795,10 @@ func loadPlugins(engine *pipeline.Engine, _ executor.Runner) []*cobra.Command {
 	pluginLoader.InjectPluginConfigEnv()
 
 	// Load TokenData once; reused for stdio injection below.
-	tokenData, _ := authpkg.LoadTokenData(defaultConfigDir())
+	tokenData, _ := authpkg.LoadTokenDataForProfileReadOnly(
+		defaultConfigDir(),
+		authpkg.RuntimeProfile(),
+	)
 	var userCtx *plugin.UserContext
 	if tokenData != nil {
 		// Inject user context if either UserID or CorpID is present.
@@ -831,9 +851,6 @@ func loadPlugins(engine *pipeline.Engine, _ executor.Runner) []*cobra.Command {
 		}
 	}
 
-	// 7. Sync plugin skills to agent directories
-	plugin.SyncSkills(allPlugins)
-
 	if len(allPlugins) > 0 {
 		slog.Debug("plugins loaded",
 			"user", len(userPlugins),
@@ -841,7 +858,7 @@ func loadPlugins(engine *pipeline.Engine, _ executor.Runner) []*cobra.Command {
 		)
 	}
 
-	return nil
+	return nil, allPlugins
 }
 
 func registerPluginHTTPServer(srv mcptypes.ServerDescriptor) {

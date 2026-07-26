@@ -126,6 +126,26 @@ func LoadProfiles(configDir string) (*ProfilesConfig, error) {
 	return &cfg, nil
 }
 
+// LoadProfilesReadOnly reads profiles.json without migration, quarantine, or
+// repair side effects. Invalid metadata is returned as an error so callers can
+// inspect a credential without changing the authentication store.
+func LoadProfilesReadOnly(configDir string) (*ProfilesConfig, error) {
+	path := ProfilesPath(configDir)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &ProfilesConfig{Version: 1}, nil
+		}
+		return nil, fmt.Errorf("read profiles: %w", err)
+	}
+	var cfg ProfilesConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("parse profiles: %w", err)
+	}
+	normalizeProfilesConfig(&cfg)
+	return &cfg, nil
+}
+
 // SaveProfiles writes profiles.json atomically.
 func SaveProfiles(configDir string, cfg *ProfilesConfig) error {
 	if cfg == nil {
@@ -620,11 +640,18 @@ func findProfile(cfg *ProfilesConfig, selector string) *Profile {
 	if selector == "" {
 		return nil
 	}
-	var corpNameMatch *Profile
 	for i := range cfg.Profiles {
-		if cfg.Profiles[i].CorpID == selector || cfg.Profiles[i].Name == selector {
+		if cfg.Profiles[i].CorpID == selector {
 			return &cfg.Profiles[i]
 		}
+	}
+	for i := range cfg.Profiles {
+		if cfg.Profiles[i].Name == selector {
+			return &cfg.Profiles[i]
+		}
+	}
+	var corpNameMatch *Profile
+	for i := range cfg.Profiles {
 		if strings.TrimSpace(cfg.Profiles[i].CorpName) == selector {
 			if corpNameMatch != nil {
 				return nil
