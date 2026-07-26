@@ -57,6 +57,16 @@ type loadedSchemaCatalog struct {
 	Index    SchemaIndex
 }
 
+// EmbeddedSchemaCatalog is the immutable, validated Schema contract shipped
+// with the binary. Long-running adapters use this typed view instead of
+// rebuilding the Cobra tree or reading generated JSON directly.
+type EmbeddedSchemaCatalog struct {
+	CatalogHash string
+	SurfaceHash string
+	Registry    SchemaRegistry
+	Index       SchemaIndex
+}
+
 var (
 	runtimeEmbeddedSchemaCatalogOnce sync.Once
 	runtimeEmbeddedSchemaCatalog     loadedSchemaCatalog
@@ -76,6 +86,20 @@ func embeddedSchemaCatalog() loadedSchemaCatalog {
 func embeddedSchemaCatalogError() error {
 	_ = embeddedSchemaCatalog()
 	return runtimeEmbeddedSchemaCatalogErr
+}
+
+// LoadEmbeddedSchemaCatalog returns the validated production Schema contract.
+func LoadEmbeddedSchemaCatalog() (EmbeddedSchemaCatalog, error) {
+	loaded := embeddedSchemaCatalog()
+	if runtimeEmbeddedSchemaCatalogErr != nil {
+		return EmbeddedSchemaCatalog{}, runtimeEmbeddedSchemaCatalogErr
+	}
+	return EmbeddedSchemaCatalog{
+		CatalogHash: loaded.Snapshot.SourceHash,
+		SurfaceHash: loaded.Snapshot.SurfaceHash,
+		Registry:    loaded.Registry,
+		Index:       loaded.Index,
+	}, nil
 }
 
 // BuildSchemaCatalogSnapshot renders a deterministic Catalog from one

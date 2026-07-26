@@ -1,0 +1,53 @@
+name: dws
+
+services:
+  dws:
+    image: ${IMAGE_REF:?IMAGE_REF is required}
+    platform: linux/arm64
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    read_only: true
+    environment:
+      HOME: /home/dws
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      TZ: Asia/Shanghai
+      DWS_CONFIG_DIR: /var/lib/dws/config
+      DWS_KEYCHAIN_DIR: /var/lib/dws/keychain
+      DWS_SERVICE_LISTEN_ADDR: :8080
+      DWS_SERVICE_PROFILE_FILE: /run/secrets/profile
+      DWS_SERVICE_TOKEN_FILE: /run/secrets/http-token
+      DWS_SERVICE_COMMAND_TIMEOUT: 30s
+      DWS_SERVICE_MAX_BODY_BYTES: "1048576"
+      DINGTALK_DWS_AGENTCODE: dws-http-service
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      - type: bind
+        source: ${DWS_STATE_DIR:-/Users/yuanzhan/Documents/Data/dws-service/state}
+        target: /var/lib/dws
+      - type: bind
+        source: ${DWS_SECRETS_DIR:-/Users/yuanzhan/Documents/Data/dws-service/secrets}
+        target: /run/secrets
+        read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    ports:
+      - "${DWS_SERVICE_HOST_PORT:-8002}:8080"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    healthcheck:
+      test:
+        - CMD
+        - /usr/local/bin/dwsd
+        - healthcheck
+        - --url
+        - http://127.0.0.1:8080/readyz
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s

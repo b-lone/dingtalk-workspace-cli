@@ -1,0 +1,11 @@
+.git
+.github
+.vscode
+.idea
+artifacts
+bin
+coverage
+dist
+node_modules
+*.log
+*.tmp
