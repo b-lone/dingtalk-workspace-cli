@@ -1,5 +1,5 @@
 ARG REGISTRY_HOST=127.0.0.1
-FROM ${REGISTRY_HOST}:5443/mirror/dockerhub/library/golang:1.25.9-bookworm@sha256:298734aec230b5f3e8cee450ce6d7eccc39f1797ba548ee90d57e9803030c6c3 AS build
+FROM docker.io/library/golang:1.25.9-bookworm@sha256:c5f8e50bbd915fd0ca37963de056b79913ff78aa7f02a861fae21058dc9ba1e9 AS build
 
 ARG TARGETOS=linux
 ARG TARGETARCH=arm64
@@ -25,7 +25,7 @@ RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
         ./cmd/dwsd
 
 ARG REGISTRY_HOST=127.0.0.1
-FROM ${REGISTRY_HOST}:5443/mirror/dockerhub/library/debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
+FROM docker.io/library/debian:bookworm-slim@sha256:9b67294679b30e5d6ab257b40594feeb4a4b81f7fcf4131f4decf0d6a212a9b0
 
 ARG APP_UID=501
 ARG APP_GID=501
