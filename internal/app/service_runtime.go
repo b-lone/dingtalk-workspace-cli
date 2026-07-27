@@ -48,6 +48,10 @@ func NewHTTPCommandService(ctx context.Context, profile string, timeout time.Dur
 	}
 	pinnedProfile := strings.TrimSpace(tokenData.CorpID)
 	authpkg.SetRuntimeProfile(pinnedProfile)
+	credentials := newFixedProfileCredentials(defaultConfigDir(), pinnedProfile)
+	if err := credentials.Ensure(ctx); err != nil {
+		return nil, fmt.Errorf("initialize fixed DWS service profile: %w", err)
+	}
 
 	configureLogLevel(&GlobalFlags{})
 	injectStaticServers()
@@ -67,21 +71,13 @@ func NewHTTPCommandService(ctx context.Context, profile string, timeout time.Dur
 		CatalogHash: schema.CatalogHash,
 		SurfaceHash: schema.SurfaceHash,
 		Index:       schema.Index,
-		Runner:      runner,
-		Ready: func(_ context.Context) error {
-			current, loadErr := authpkg.LoadTokenDataForProfileReadOnly(defaultConfigDir(), pinnedProfile)
-			if loadErr != nil {
-				return loadErr
-			}
-			if current == nil || (!current.IsAccessTokenValid() && !current.IsRefreshTokenValid()) {
-				return fmt.Errorf("fixed DWS service profile credentials are expired")
-			}
-			if strings.TrimSpace(current.CorpID) != pinnedProfile {
-				return fmt.Errorf("fixed DWS service profile identity changed")
-			}
-			return nil
+		Runner: &fixedProfileCredentialRunner{
+			credentials: credentials,
+			next:        runner,
 		},
+		Ready: credentials.Ready,
 		Close: func() error {
+			credentials.Close()
 			StopAllStdioClients()
 			CloseAuditSink()
 			CloseFileLogger()
@@ -104,5 +100,6 @@ func NewHTTPCommandService(ctx context.Context, profile string, timeout time.Dur
 		_ = service.Close()
 		return nil, fmt.Errorf("DWS service is not ready: %w", err)
 	}
+	credentials.Start(ctx)
 	return service, nil
 }
