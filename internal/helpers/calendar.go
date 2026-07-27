@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/resultnormalizer"
 	"github.com/spf13/cobra"
 )
 
@@ -1922,23 +1922,10 @@ func callSortedCalendarEvents(cmd *cobra.Command, toolName string, toolArgs map[
 	// are omitted, which is easy for callers to miss.
 	attachCalendarSearchRange(parsed, cmd, toolArgs)
 
+	resultnormalizer.NormalizeCalendarEvents(parsed)
+
 	result, ok := parsed["result"].(map[string]any)
 	if ok {
-		if events, ok := result["events"].([]any); ok {
-			// Filter out invalid events (a valid event must have an id)
-			filtered := make([]any, 0, len(events))
-			for _, e := range events {
-				if m, ok := e.(map[string]any); ok {
-					if id, exists := m["id"]; exists && id != nil && id != "" {
-						filtered = append(filtered, e)
-					}
-				}
-			}
-			sort.SliceStable(filtered, func(i, j int) bool {
-				return calendarEventSortKey(filtered[i]) < calendarEventSortKey(filtered[j])
-			})
-			result["events"] = filtered
-		}
 		// Surface pagination hint when nextCursor is present
 		if nc, ok := result["nextCursor"].(string); ok && nc != "" {
 			result["paginationHint"] = "还有更多日程，使用 --cursor \"" + nc + "\" 获取下一页"
@@ -1994,27 +1981,6 @@ func attachCalendarSearchRange(parsed map[string]any, cmd *cobra.Command, toolAr
 		return
 	}
 	parsed["searchRange"] = searchRange
-}
-
-func calendarEventSortKey(event any) int64 {
-	m, ok := event.(map[string]any)
-	if !ok {
-		return 0
-	}
-	if start, ok := m["start"].(map[string]any); ok {
-		if dt, ok := start["dateTime"].(string); ok && dt != "" {
-			if t, err := time.Parse(time.RFC3339, dt); err == nil {
-				return t.UnixMilli()
-			}
-		}
-	}
-	if created, ok := m["created"].(float64); ok {
-		return int64(created)
-	}
-	if updated, ok := m["updated"].(float64); ok {
-		return int64(updated)
-	}
-	return 0
 }
 
 // recurrenceFlagNames lists all flattened --recurrence-* CLI flags that together

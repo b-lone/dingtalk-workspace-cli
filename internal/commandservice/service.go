@@ -28,6 +28,7 @@ import (
 
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/cli"
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/executor"
+	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/resultnormalizer"
 )
 
 const (
@@ -273,6 +274,7 @@ func (s *Service) Execute(ctx context.Context, canonical string, request Execute
 	if nested, ok := result.Response["content"].(map[string]any); ok {
 		content = nested
 	}
+	resultnormalizer.NormalizeCommand(tool.Identity.CanonicalPath, content)
 	return ExecuteResult{
 		CanonicalPath: tool.Identity.CanonicalPath,
 		DryRun:        request.DryRun,
