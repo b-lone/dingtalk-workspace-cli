@@ -49,11 +49,10 @@ RUN groupadd --gid "${APP_GID}" dws \
         --group dws \
         --mode 0700 \
         /var/lib/dws/config \
-        /var/lib/dws/keychain \
-    && apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates tzdata \
-    && rm -rf /var/lib/apt/lists/*
+        /var/lib/dws/keychain
 
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=build /usr/share/zoneinfo/Asia/Shanghai /usr/share/zoneinfo/Asia/Shanghai
 COPY --from=build --chmod=0555 /out/dws /usr/local/bin/dws
 COPY --from=build --chmod=0555 /out/dwsd /usr/local/bin/dwsd
 
