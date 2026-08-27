@@ -122,6 +122,9 @@ func (r *profileCredentialRunner) Run(ctx context.Context, invocation executor.I
 func (r *profileCredentialRunner) RunWithProfile(ctx context.Context, selector string, invocation executor.Invocation) (executor.Result, error) {
 	r.executionMu.Lock()
 	defer r.executionMu.Unlock()
+	if invocation.DryRun {
+		return r.next.Run(ctx, invocation)
+	}
 
 	profile := strings.TrimSpace(r.defaultProfile)
 	selector = strings.TrimSpace(selector)
@@ -147,14 +150,12 @@ func (r *profileCredentialRunner) RunWithProfile(ctx context.Context, selector s
 	authpkg.SetRuntimeProfile(profile)
 	defer authpkg.SetRuntimeProfile(previousProfile)
 
-	if !invocation.DryRun {
-		if err := r.ensureProfile(ctx, profile); err != nil {
-			return executor.Result{}, apperrors.NewAuth(
-				"DWS service identity is unavailable",
-				apperrors.WithReason("profile_unavailable"),
-				apperrors.WithCause(err),
-			)
-		}
+	if err := r.ensureProfile(ctx, profile); err != nil {
+		return executor.Result{}, apperrors.NewAuth(
+			"DWS service identity is unavailable",
+			apperrors.WithReason("profile_unavailable"),
+			apperrors.WithCause(err),
+		)
 	}
 	return r.next.Run(ctx, invocation)
 }

@@ -88,7 +88,7 @@ func TestProfileCredentialRunnerStopsBeforeCommand(t *testing.T) {
 	runner := &profileCredentialRunner{
 		defaultProfile: "ding-test",
 		resolveProfile: func(string) (string, error) {
-			return "", errors.New("must not resolve the default profile")
+			return "", errors.New("must not resolve credentials for dry-run")
 		},
 		ensureProfile: func(context.Context, string) error {
 			return errors.New("unavailable")
@@ -122,8 +122,8 @@ func TestProfileCredentialRunnerPreservesDryRunBarrier(t *testing.T) {
 		next: next,
 	}
 
-	if _, err := runner.Run(context.Background(), executor.Invocation{DryRun: true}); err != nil {
-		t.Fatalf("Run() error = %v", err)
+	if _, err := runner.RunWithProfile(context.Background(), "unknown", executor.Invocation{DryRun: true}); err != nil {
+		t.Fatalf("RunWithProfile() error = %v", err)
 	}
 	if !next.called {
 		t.Fatal("dry-run invocation did not reach the local runner")
