@@ -6,7 +6,6 @@ package app
 import (
 	"context"
 	"errors"
-	"sync"
 	"testing"
 	"time"
 
@@ -84,19 +83,17 @@ func TestFixedProfileCredentialsReadyIsReadOnly(t *testing.T) {
 	}
 }
 
-func TestFixedProfileCredentialRunnerStopsBeforeCommand(t *testing.T) {
+func TestProfileCredentialRunnerStopsBeforeCommand(t *testing.T) {
 	next := &recordingRunner{}
-	credentials := &fixedProfileCredentials{
-		profile: "ding-test",
-		load: func() (*authpkg.TokenData, error) {
-			return nil, errors.New("unavailable")
+	runner := &profileCredentialRunner{
+		defaultProfile: "ding-test",
+		resolveProfile: func(string) (string, error) {
+			return "", errors.New("must not resolve the default profile")
 		},
-		refresh:         func(context.Context) error { return nil },
-		resetTokenCache: func() {},
-	}
-	runner := &fixedProfileCredentialRunner{
-		credentials: credentials,
-		next:        next,
+		ensureProfile: func(context.Context, string) error {
+			return errors.New("unavailable")
+		},
+		next: next,
 	}
 
 	_, err := runner.Run(context.Background(), executor.Invocation{})
@@ -112,19 +109,17 @@ func TestFixedProfileCredentialRunnerStopsBeforeCommand(t *testing.T) {
 	}
 }
 
-func TestFixedProfileCredentialRunnerPreservesDryRunBarrier(t *testing.T) {
+func TestProfileCredentialRunnerPreservesDryRunBarrier(t *testing.T) {
 	next := &recordingRunner{}
-	credentials := &fixedProfileCredentials{
-		profile: "ding-test",
-		load: func() (*authpkg.TokenData, error) {
-			return nil, errors.New("must not load credentials")
+	runner := &profileCredentialRunner{
+		defaultProfile: "ding-test",
+		resolveProfile: func(string) (string, error) {
+			return "", errors.New("must not resolve the default profile")
 		},
-		refresh:         func(context.Context) error { return nil },
-		resetTokenCache: func() {},
-	}
-	runner := &fixedProfileCredentialRunner{
-		credentials: credentials,
-		next:        next,
+		ensureProfile: func(context.Context, string) error {
+			return errors.New("must not load credentials")
+		},
+		next: next,
 	}
 
 	if _, err := runner.Run(context.Background(), executor.Invocation{DryRun: true}); err != nil {
@@ -135,48 +130,170 @@ func TestFixedProfileCredentialRunnerPreservesDryRunBarrier(t *testing.T) {
 	}
 }
 
-func TestFixedProfileCredentialsMaintainsAccessToken(t *testing.T) {
-	var stateMu sync.Mutex
-	tokenData := &authpkg.TokenData{
-		AccessToken:  "expired",
-		RefreshToken: "refresh",
-		ExpiresAt:    time.Now().Add(-time.Hour),
-		RefreshExpAt: time.Now().Add(time.Hour),
-		CorpID:       "ding-test",
-	}
-	refreshed := make(chan struct{}, 1)
-	credentials := &fixedProfileCredentials{
-		profile: "ding-test",
-		load: func() (*authpkg.TokenData, error) {
-			stateMu.Lock()
-			defer stateMu.Unlock()
-			copy := *tokenData
-			return &copy, nil
+func TestProfileCredentialRunnerSelectsAndRestoresProfile(t *testing.T) {
+	previousProfile := authpkg.RuntimeProfile()
+	authpkg.SetRuntimeProfile("ding-default")
+	t.Cleanup(func() {
+		authpkg.SetRuntimeProfile(previousProfile)
+	})
+
+	next := &runtimeProfileRunner{}
+	ensuredProfile := ""
+	runner := &profileCredentialRunner{
+		defaultProfile: "ding-default",
+		resolveProfile: func(selector string) (string, error) {
+			if selector != "Alibaba" {
+				t.Fatalf("profile selector = %q, want Alibaba", selector)
+			}
+			return "ding-alibaba", nil
 		},
-		refresh: func(context.Context) error {
-			stateMu.Lock()
-			tokenData.AccessToken = "fresh"
-			tokenData.ExpiresAt = time.Now().Add(time.Hour)
-			stateMu.Unlock()
+		ensureProfile: func(_ context.Context, profile string) error {
+			ensuredProfile = profile
+			if got := authpkg.RuntimeProfile(); got != "ding-alibaba" {
+				t.Fatalf("runtime profile during credential check = %q, want ding-alibaba", got)
+			}
+			return nil
+		},
+		next: next,
+	}
+
+	if _, err := runner.RunWithProfile(context.Background(), "Alibaba", executor.Invocation{}); err != nil {
+		t.Fatalf("RunWithProfile() error = %v", err)
+	}
+	if ensuredProfile != "ding-alibaba" {
+		t.Fatalf("ensured profile = %q, want ding-alibaba", ensuredProfile)
+	}
+	if len(next.profiles) != 1 || next.profiles[0] != "ding-alibaba" {
+		t.Fatalf("command runtime profiles = %#v, want [ding-alibaba]", next.profiles)
+	}
+	if got := authpkg.RuntimeProfile(); got != "ding-default" {
+		t.Fatalf("runtime profile after command = %q, want ding-default", got)
+	}
+}
+
+func TestProfileCredentialRunnerMaintainsDefaultProfile(t *testing.T) {
+	previousProfile := authpkg.RuntimeProfile()
+	authpkg.SetRuntimeProfile("outside")
+	t.Cleanup(func() {
+		authpkg.SetRuntimeProfile(previousProfile)
+	})
+
+	maintained := make(chan string, 1)
+	runner := &profileCredentialRunner{
+		defaultProfile: "ding-default",
+		resolveProfile: func(string) (string, error) {
+			return "", errors.New("must not resolve the default profile")
+		},
+		ensureProfile: func(_ context.Context, profile string) error {
+			if runtimeProfile := authpkg.RuntimeProfile(); runtimeProfile != profile {
+				return errors.New("credential maintenance used the wrong runtime profile")
+			}
 			select {
-			case refreshed <- struct{}{}:
+			case maintained <- profile:
 			default:
 			}
 			return nil
 		},
-		resetTokenCache: func() {},
+		next:            &runtimeProfileRunner{},
 		refreshInterval: time.Millisecond,
 	}
-	credentials.Start(context.Background())
-	t.Cleanup(credentials.Close)
+	runner.Start(context.Background())
+	t.Cleanup(runner.Close)
 
 	select {
-	case <-refreshed:
+	case profile := <-maintained:
+		if profile != "ding-default" {
+			t.Fatalf("maintained profile = %q, want ding-default", profile)
+		}
 	case <-time.After(time.Second):
-		t.Fatal("credential maintenance did not refresh the access token")
+		t.Fatal("default profile credential maintenance did not run")
 	}
-	if err := credentials.Ready(context.Background()); err != nil {
-		t.Fatalf("Ready() error = %v", err)
+	runner.executionMu.Lock()
+	runner.executionMu.Unlock()
+	if got := authpkg.RuntimeProfile(); got != "outside" {
+		t.Fatalf("runtime profile after maintenance = %q, want outside", got)
+	}
+}
+
+func TestProfileCredentialRunnerSerializesProfileSelection(t *testing.T) {
+	previousProfile := authpkg.RuntimeProfile()
+	authpkg.SetRuntimeProfile("ding-default")
+	t.Cleanup(func() {
+		authpkg.SetRuntimeProfile(previousProfile)
+	})
+
+	firstEntered := make(chan struct{})
+	secondEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	releaseSecond := make(chan struct{})
+	firstResult := make(chan error, 1)
+	secondResult := make(chan error, 1)
+	defer func() {
+		select {
+		case <-releaseFirst:
+		default:
+			close(releaseFirst)
+		}
+		select {
+		case <-releaseSecond:
+		default:
+			close(releaseSecond)
+		}
+	}()
+
+	runner := &profileCredentialRunner{
+		defaultProfile: "ding-default",
+		resolveProfile: func(selector string) (string, error) {
+			switch selector {
+			case "first":
+				return "ding-first", nil
+			case "second":
+				return "ding-second", nil
+			default:
+				return "", errors.New("unknown test profile")
+			}
+		},
+		ensureProfile: func(_ context.Context, profile string) error {
+			switch profile {
+			case "ding-first":
+				close(firstEntered)
+				<-releaseFirst
+			case "ding-second":
+				close(secondEntered)
+				<-releaseSecond
+			}
+			return nil
+		},
+		next: &runtimeProfileRunner{},
+	}
+
+	go func() {
+		_, err := runner.RunWithProfile(context.Background(), "first", executor.Invocation{})
+		firstResult <- err
+	}()
+	<-firstEntered
+	go func() {
+		_, err := runner.RunWithProfile(context.Background(), "second", executor.Invocation{})
+		secondResult <- err
+	}()
+
+	select {
+	case <-secondEntered:
+		t.Error("second profile entered while the first profile was still active")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(releaseFirst)
+	if err := <-firstResult; err != nil {
+		t.Fatalf("first RunWithProfile() error = %v", err)
+	}
+	select {
+	case <-secondEntered:
+	case <-time.After(time.Second):
+		t.Fatal("second profile did not enter after the first profile completed")
+	}
+	close(releaseSecond)
+	if err := <-secondResult; err != nil {
+		t.Fatalf("second RunWithProfile() error = %v", err)
 	}
 }
 
@@ -187,4 +304,13 @@ type recordingRunner struct {
 func (r *recordingRunner) Run(context.Context, executor.Invocation) (executor.Result, error) {
 	r.called = true
 	return executor.Result{}, nil
+}
+
+type runtimeProfileRunner struct {
+	profiles []string
+}
+
+func (r *runtimeProfileRunner) Run(_ context.Context, invocation executor.Invocation) (executor.Result, error) {
+	r.profiles = append(r.profiles, authpkg.RuntimeProfile())
+	return executor.Result{Invocation: invocation}, nil
 }

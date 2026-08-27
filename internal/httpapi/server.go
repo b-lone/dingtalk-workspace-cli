@@ -1,8 +1,8 @@
 // Copyright 2026 Alibaba Group
 // Licensed under the Apache License, Version 2.0 (the "License");
 
-// Package httpapi provides the authenticated HTTP boundary for one fixed DWS
-// profile. It exposes the reviewed command service contract, not CLI argv.
+// Package httpapi provides the authenticated HTTP boundary for DWS commands.
+// Execute requests may select a registered profile without accepting CLI argv.
 package httpapi
 
 import (
@@ -50,6 +50,7 @@ type Server struct {
 }
 
 type executeRequest struct {
+	Profile   *string        `json:"profile,omitempty"`
 	Arguments map[string]any `json:"arguments"`
 	Confirmed bool           `json:"confirmed,omitempty"`
 	DryRun    bool           `json:"dry_run,omitempty"`
@@ -207,10 +208,22 @@ func (s *Server) handleExecute(writer http.ResponseWriter, request *http.Request
 		})
 		return
 	}
+	profile := ""
+	if input.Profile != nil {
+		profile = strings.TrimSpace(*input.Profile)
+		if profile == "" {
+			s.writeError(writer, request, http.StatusBadRequest, errorPayload{
+				Code:    commandservice.CodeInvalidArguments,
+				Message: "profile must not be blank when provided",
+			})
+			return
+		}
+	}
 	command := request.PathValue("command")
 	ctx, cancel := context.WithTimeout(request.Context(), s.commandTimeout)
 	defer cancel()
 	result, err := s.service.Execute(ctx, command, commandservice.ExecuteRequest{
+		Profile:   profile,
 		Arguments: input.Arguments,
 		Confirmed: input.Confirmed,
 		DryRun:    input.DryRun,

@@ -108,14 +108,14 @@ func TestServerExecutesStrictJSONRequest(t *testing.T) {
 		server.Handler(),
 		http.MethodPost,
 		"/v1/commands/sample.run/execute",
-		`{"arguments":{"limit":3},"confirmed":true}`,
+		`{"profile":"Alibaba","arguments":{"limit":3},"confirmed":true}`,
 		testBearerToken,
 	)
 	if response.Code != http.StatusOK {
 		t.Fatalf("execute status = %d, want 200; body=%s", response.Code, response.Body.String())
 	}
 	limit, ok := service.request.Arguments["limit"].(json.Number)
-	if !ok || limit.String() != "3" || !service.request.Confirmed {
+	if !ok || limit.String() != "3" || !service.request.Confirmed || service.request.Profile != "Alibaba" {
 		t.Fatalf("decoded execute request = %#v", service.request)
 	}
 
@@ -123,11 +123,22 @@ func TestServerExecutesStrictJSONRequest(t *testing.T) {
 		server.Handler(),
 		http.MethodPost,
 		"/v1/commands/sample.run/execute",
-		`{"arguments":{},"profile":"other"}`,
+		`{"arguments":{},"unexpected":"value"}`,
 		testBearerToken,
 	)
 	if invalid.Code != http.StatusBadRequest {
 		t.Fatalf("unknown request field status = %d, want 400", invalid.Code)
+	}
+
+	blankProfile := performRequest(
+		server.Handler(),
+		http.MethodPost,
+		"/v1/commands/sample.run/execute",
+		`{"profile":"   ","arguments":{}}`,
+		testBearerToken,
+	)
+	if blankProfile.Code != http.StatusBadRequest {
+		t.Fatalf("blank profile status = %d, want 400", blankProfile.Code)
 	}
 
 	request := httptest.NewRequest(http.MethodPost, "/v1/commands/sample.run/execute", strings.NewReader(`{"arguments":{}}`))

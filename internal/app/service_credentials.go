@@ -23,13 +23,8 @@ type fixedProfileCredentials struct {
 	load            func() (*authpkg.TokenData, error)
 	refresh         func(context.Context) error
 	resetTokenCache func()
-	refreshInterval time.Duration
 
-	ensureMu  sync.Mutex
-	startOnce sync.Once
-	closeOnce sync.Once
-	cancel    context.CancelFunc
-	done      chan struct{}
+	ensureMu sync.Mutex
 }
 
 func newFixedProfileCredentials(configDir, profile string) *fixedProfileCredentials {
@@ -51,7 +46,6 @@ func newFixedProfileCredentials(configDir, profile string) *fixedProfileCredenti
 			return nil
 		},
 		resetTokenCache: ResetRuntimeTokenCache,
-		refreshInterval: serviceCredentialRefreshInterval,
 	}
 }
 
@@ -93,44 +87,6 @@ func (c *fixedProfileCredentials) Ready(context.Context) error {
 	return nil
 }
 
-func (c *fixedProfileCredentials) Start(parent context.Context) {
-	c.startOnce.Do(func() {
-		ctx, cancel := context.WithCancel(parent)
-		c.cancel = cancel
-		c.done = make(chan struct{})
-		go c.maintain(ctx)
-	})
-}
-
-func (c *fixedProfileCredentials) Close() {
-	c.closeOnce.Do(func() {
-		if c.cancel == nil {
-			return
-		}
-		c.cancel()
-		<-c.done
-	})
-}
-
-func (c *fixedProfileCredentials) maintain(ctx context.Context) {
-	defer close(c.done)
-	ticker := time.NewTicker(c.refreshInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := c.Ensure(ctx); err != nil {
-				slog.Warn("DWS service credential maintenance failed",
-					"category", "auth",
-					"reason", "fixed_profile_unavailable",
-				)
-			}
-		}
-	}
-}
-
 func (c *fixedProfileCredentials) loadAndValidate() (*authpkg.TokenData, error) {
 	tokenData, err := c.load()
 	if err != nil {
@@ -145,21 +101,114 @@ func (c *fixedProfileCredentials) loadAndValidate() (*authpkg.TokenData, error) 
 	return tokenData, nil
 }
 
-type fixedProfileCredentialRunner struct {
-	credentials *fixedProfileCredentials
-	next        executor.Runner
+type profileCredentialRunner struct {
+	defaultProfile  string
+	resolveProfile  func(string) (string, error)
+	ensureProfile   func(context.Context, string) error
+	next            executor.Runner
+	refreshInterval time.Duration
+
+	executionMu sync.Mutex
+	startOnce   sync.Once
+	closeOnce   sync.Once
+	cancel      context.CancelFunc
+	done        chan struct{}
 }
 
-func (r *fixedProfileCredentialRunner) Run(ctx context.Context, invocation executor.Invocation) (executor.Result, error) {
-	if invocation.DryRun {
-		return r.next.Run(ctx, invocation)
+func (r *profileCredentialRunner) Run(ctx context.Context, invocation executor.Invocation) (executor.Result, error) {
+	return r.RunWithProfile(ctx, "", invocation)
+}
+
+func (r *profileCredentialRunner) RunWithProfile(ctx context.Context, selector string, invocation executor.Invocation) (executor.Result, error) {
+	r.executionMu.Lock()
+	defer r.executionMu.Unlock()
+
+	profile := strings.TrimSpace(r.defaultProfile)
+	selector = strings.TrimSpace(selector)
+	if selector != "" {
+		resolved, err := r.resolveProfile(selector)
+		if err != nil {
+			return executor.Result{}, apperrors.NewAuth(
+				"DWS service profile is unavailable",
+				apperrors.WithReason("profile_unavailable"),
+				apperrors.WithCause(err),
+			)
+		}
+		profile = strings.TrimSpace(resolved)
 	}
-	if err := r.credentials.Ensure(ctx); err != nil {
+	if profile == "" {
 		return executor.Result{}, apperrors.NewAuth(
-			"DWS service identity is unavailable",
-			apperrors.WithReason("fixed_profile_unavailable"),
-			apperrors.WithCause(err),
+			"DWS service profile is unavailable",
+			apperrors.WithReason("profile_unavailable"),
 		)
 	}
+
+	previousProfile := authpkg.RuntimeProfile()
+	authpkg.SetRuntimeProfile(profile)
+	defer authpkg.SetRuntimeProfile(previousProfile)
+
+	if !invocation.DryRun {
+		if err := r.ensureProfile(ctx, profile); err != nil {
+			return executor.Result{}, apperrors.NewAuth(
+				"DWS service identity is unavailable",
+				apperrors.WithReason("profile_unavailable"),
+				apperrors.WithCause(err),
+			)
+		}
+	}
 	return r.next.Run(ctx, invocation)
+}
+
+func (r *profileCredentialRunner) Start(parent context.Context) {
+	r.startOnce.Do(func() {
+		ctx, cancel := context.WithCancel(parent)
+		r.cancel = cancel
+		r.done = make(chan struct{})
+		go r.maintain(ctx)
+	})
+}
+
+func (r *profileCredentialRunner) Close() {
+	r.closeOnce.Do(func() {
+		if r.cancel == nil {
+			return
+		}
+		r.cancel()
+		<-r.done
+	})
+}
+
+func (r *profileCredentialRunner) maintain(ctx context.Context) {
+	defer close(r.done)
+	interval := r.refreshInterval
+	if interval <= 0 {
+		interval = serviceCredentialRefreshInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			r.maintainDefaultProfile(ctx)
+		}
+	}
+}
+
+func (r *profileCredentialRunner) maintainDefaultProfile(ctx context.Context) {
+	r.executionMu.Lock()
+	defer r.executionMu.Unlock()
+
+	profile := strings.TrimSpace(r.defaultProfile)
+	previousProfile := authpkg.RuntimeProfile()
+	authpkg.SetRuntimeProfile(profile)
+	defer authpkg.SetRuntimeProfile(previousProfile)
+
+	if err := r.ensureProfile(ctx, profile); err != nil {
+		slog.Warn("DWS service credential maintenance failed",
+			"category", "auth",
+			"reason", "default_profile_unavailable",
+		)
+	}
 }

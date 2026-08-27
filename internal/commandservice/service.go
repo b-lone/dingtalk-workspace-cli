@@ -81,6 +81,7 @@ type Metadata struct {
 }
 
 type ExecuteRequest struct {
+	Profile   string
 	Arguments map[string]any
 	Confirmed bool
 	DryRun    bool
@@ -103,9 +104,16 @@ type Options struct {
 	Allow       func(cli.ToolSpec) bool
 }
 
-// Service is a single-profile command executor. Execution is serialized
-// because the existing DWS runner owns process-scoped transport and audit
-// state; discovery and health reads remain concurrent.
+// ProfileRunner executes one invocation against an explicit DWS profile.
+// Implementations must keep profile selection active for the entire command.
+type ProfileRunner interface {
+	executor.Runner
+	RunWithProfile(context.Context, string, executor.Invocation) (executor.Result, error)
+}
+
+// Service serializes command execution because DWS profile selection,
+// transport, and audit identity are process-scoped. Discovery and health
+// reads remain concurrent.
 type Service struct {
 	version     string
 	catalogHash string
@@ -266,7 +274,7 @@ func (s *Service) Execute(ctx context.Context, canonical string, request Execute
 	invocation.CanonicalPath = tool.Identity.CanonicalPath
 	invocation.DryRun = request.DryRun
 
-	result, err := s.run(ctx, invocation)
+	result, err := s.run(ctx, strings.TrimSpace(request.Profile), invocation)
 	if err != nil {
 		return ExecuteResult{}, err
 	}
@@ -282,9 +290,18 @@ func (s *Service) Execute(ctx context.Context, canonical string, request Execute
 	}, nil
 }
 
-func (s *Service) run(ctx context.Context, invocation executor.Invocation) (executor.Result, error) {
+func (s *Service) run(ctx context.Context, profile string, invocation executor.Invocation) (executor.Result, error) {
 	s.executionMu.Lock()
 	defer s.executionMu.Unlock()
+	if runner, ok := s.runner.(ProfileRunner); ok {
+		return runner.RunWithProfile(ctx, profile, invocation)
+	}
+	if profile != "" {
+		return executor.Result{}, &Error{
+			Code:    CodeInvalidArguments,
+			Message: "the configured DWS runner does not support profile selection",
+		}
+	}
 	return s.runner.Run(ctx, invocation)
 }
 

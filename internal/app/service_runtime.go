@@ -25,9 +25,9 @@ import (
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/commandservice"
 )
 
-// NewHTTPCommandService builds the fixed-profile, plugin-free runtime used by
-// dwsd. The selected profile is resolved once and pinned to its immutable
-// corpId for the lifetime of the process.
+// NewHTTPCommandService builds the plugin-free runtime used by dwsd. The
+// startup profile remains the default identity while individual execute
+// requests may select another registered profile.
 func NewHTTPCommandService(ctx context.Context, profile string, timeout time.Duration) (*commandservice.Service, error) {
 	profile = strings.TrimSpace(profile)
 	if profile == "" {
@@ -36,7 +36,8 @@ func NewHTTPCommandService(ctx context.Context, profile string, timeout time.Dur
 	if timeout <= 0 {
 		return nil, fmt.Errorf("DWS service command timeout must be positive")
 	}
-	tokenData, err := authpkg.LoadTokenDataForProfileReadOnly(defaultConfigDir(), profile)
+	configDir := defaultConfigDir()
+	tokenData, err := authpkg.LoadTokenDataForProfileReadOnly(configDir, profile)
 	if err != nil {
 		return nil, fmt.Errorf("load fixed DWS service profile: %w", err)
 	}
@@ -48,7 +49,7 @@ func NewHTTPCommandService(ctx context.Context, profile string, timeout time.Dur
 	}
 	pinnedProfile := strings.TrimSpace(tokenData.CorpID)
 	authpkg.SetRuntimeProfile(pinnedProfile)
-	credentials := newFixedProfileCredentials(defaultConfigDir(), pinnedProfile)
+	credentials := newFixedProfileCredentials(configDir, pinnedProfile)
 	if err := credentials.Ensure(ctx); err != nil {
 		return nil, fmt.Errorf("initialize fixed DWS service profile: %w", err)
 	}
@@ -65,19 +66,41 @@ func NewHTTPCommandService(ctx context.Context, profile string, timeout time.Dur
 		Profile: pinnedProfile,
 		Timeout: int(math.Ceil(timeout.Seconds())),
 	}
-	runner := newCommandRunnerWithFlags(cli.NewEnvironmentLoader(), flags)
+	commandRunner := newCommandRunnerWithFlags(cli.NewEnvironmentLoader(), flags)
+	credentialsByProfile := map[string]*fixedProfileCredentials{
+		pinnedProfile: credentials,
+	}
+	profileRunner := &profileCredentialRunner{
+		defaultProfile: pinnedProfile,
+		resolveProfile: func(selector string) (string, error) {
+			selected, err := authpkg.LoadTokenDataForProfileReadOnly(configDir, selector)
+			if err != nil {
+				return "", err
+			}
+			if selected == nil || strings.TrimSpace(selected.CorpID) == "" {
+				return "", fmt.Errorf("DWS service profile has no corpId")
+			}
+			return strings.TrimSpace(selected.CorpID), nil
+		},
+		ensureProfile: func(ctx context.Context, profile string) error {
+			selected := credentialsByProfile[profile]
+			if selected == nil {
+				selected = newFixedProfileCredentials(configDir, profile)
+				credentialsByProfile[profile] = selected
+			}
+			return selected.Ensure(ctx)
+		},
+		next: commandRunner,
+	}
 	service, err := commandservice.New(commandservice.Options{
 		Version:     Version(),
 		CatalogHash: schema.CatalogHash,
 		SurfaceHash: schema.SurfaceHash,
 		Index:       schema.Index,
-		Runner: &fixedProfileCredentialRunner{
-			credentials: credentials,
-			next:        runner,
-		},
-		Ready: credentials.Ready,
+		Runner:      profileRunner,
+		Ready:       credentials.Ready,
 		Close: func() error {
-			credentials.Close()
+			profileRunner.Close()
 			StopAllStdioClients()
 			CloseAuditSink()
 			CloseFileLogger()
@@ -100,6 +123,6 @@ func NewHTTPCommandService(ctx context.Context, profile string, timeout time.Dur
 		_ = service.Close()
 		return nil, fmt.Errorf("DWS service is not ready: %w", err)
 	}
-	credentials.Start(ctx)
+	profileRunner.Start(ctx)
 	return service, nil
 }

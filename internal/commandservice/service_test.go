@@ -28,6 +28,26 @@ func (r *recordingRunner) Run(_ context.Context, invocation executor.Invocation)
 	}, nil
 }
 
+type profileRecordingRunner struct{}
+
+func (profileRecordingRunner) Run(_ context.Context, invocation executor.Invocation) (executor.Result, error) {
+	return executor.Result{
+		Invocation: invocation,
+		Response: map[string]any{
+			"content": map[string]any{"profile": "unscoped"},
+		},
+	}, nil
+}
+
+func (profileRecordingRunner) RunWithProfile(_ context.Context, profile string, invocation executor.Invocation) (executor.Result, error) {
+	return executor.Result{
+		Invocation: invocation,
+		Response: map[string]any{
+			"content": map[string]any{"profile": profile},
+		},
+	}, nil
+}
+
 func TestServiceListsAndExecutesReviewedMCPCommands(t *testing.T) {
 	runner := &recordingRunner{}
 	service := newTestService(t, runner)
@@ -90,6 +110,31 @@ func TestServiceFailsClosedForConfirmationAndInvalidArguments(t *testing.T) {
 
 	_, err = service.Execute(context.Background(), "sample.missing", ExecuteRequest{})
 	assertServiceErrorCode(t, err, CodeCommandNotFound)
+}
+
+func TestServiceExecutesAgainstRequestedProfile(t *testing.T) {
+	service := newTestService(t, profileRecordingRunner{})
+
+	result, err := service.Execute(context.Background(), "sample.run", ExecuteRequest{
+		Profile:   "Alibaba",
+		Arguments: map[string]any{"input": "value"},
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if got := result.Content["profile"]; got != "Alibaba" {
+		t.Fatalf("Execute() profile = %v, want Alibaba", got)
+	}
+}
+
+func TestServiceRejectsProfileWhenRunnerCannotSelectIt(t *testing.T) {
+	service := newTestService(t, &recordingRunner{})
+
+	_, err := service.Execute(context.Background(), "sample.run", ExecuteRequest{
+		Profile:   "Alibaba",
+		Arguments: map[string]any{"input": "value"},
+	})
+	assertServiceErrorCode(t, err, CodeInvalidArguments)
 }
 
 func newTestService(t *testing.T, runner executor.Runner) *Service {
