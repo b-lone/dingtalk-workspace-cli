@@ -107,10 +107,24 @@ func (p *OAuthProvider) exchangeCodeViaMCP(ctx context.Context, code string) (*T
 }
 
 func (p *OAuthProvider) refreshWithRefreshToken(ctx context.Context, data *TokenData) (*TokenData, error) {
+	updated, err := p.refreshTokenData(ctx, data)
+	if err != nil {
+		return nil, err
+	}
+
+	// Refresh runs under lockedRefresh's dual-layer lock; use the lock-free
+	// saver to avoid re-acquiring the non-reentrant lock (deadlock).
+	if err := saveTokenDataLocked(p.configDir, updated); err != nil {
+		return nil, fmt.Errorf("保存刷新后的 token 失败（旧 refresh_token 已失效，请重新登录）: %w", err)
+	}
+	return updated, nil
+}
+
+func (p *OAuthProvider) refreshTokenData(ctx context.Context, data *TokenData) (*TokenData, error) {
 	// Use stored Source to determine refresh path (not current runtime state)
 	// This ensures refresh works even if environment variables changed since login
 	if data.Source == "mcp" {
-		return p.refreshViaMCP(ctx, data)
+		return p.refreshTokenDataViaMCP(ctx, data)
 	}
 
 	// Direct mode: use stored clientId and load saved clientSecret
@@ -154,16 +168,11 @@ func (p *OAuthProvider) refreshWithRefreshToken(ctx context.Context, data *Token
 		updated.CorpName = data.CorpName
 	}
 
-	// Refresh runs under lockedRefresh's dual-layer lock; use the lock-free
-	// saver to avoid re-acquiring the non-reentrant lock (deadlock).
-	if err := saveTokenDataLocked(p.configDir, updated); err != nil {
-		return nil, fmt.Errorf("保存刷新后的 token 失败（旧 refresh_token 已失效，请重新登录）: %w", err)
-	}
 	return updated, nil
 }
 
-// refreshViaMCP refreshes token via MCP proxy.
-func (p *OAuthProvider) refreshViaMCP(ctx context.Context, data *TokenData) (*TokenData, error) {
+// refreshTokenDataViaMCP refreshes token data via MCP without persisting it.
+func (p *OAuthProvider) refreshTokenDataViaMCP(ctx context.Context, data *TokenData) (*TokenData, error) {
 	// Use stored clientId from token data
 	clientID := data.ClientID
 	if clientID == "" {
@@ -200,11 +209,6 @@ func (p *OAuthProvider) refreshViaMCP(ctx context.Context, data *TokenData) (*To
 		updated.CorpName = data.CorpName
 	}
 
-	// Refresh runs under lockedRefresh's dual-layer lock; use the lock-free
-	// saver to avoid re-acquiring the non-reentrant lock (deadlock).
-	if err := saveTokenDataLocked(p.configDir, updated); err != nil {
-		return nil, fmt.Errorf("保存刷新后的 token 失败（旧 refresh_token 已失效，请重新登录）: %w", err)
-	}
 	return updated, nil
 }
 

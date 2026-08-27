@@ -26,7 +26,8 @@ func TestFixedProfileCredentialsRefreshesExpiredAccessToken(t *testing.T) {
 		CorpID:       "ding-test",
 	}
 	refreshCalls := 0
-	resetCalls := 0
+	cachedProfile := ""
+	cachedToken := ""
 	credentials := &fixedProfileCredentials{
 		profile: "ding-test",
 		load: func() (*authpkg.TokenData, error) {
@@ -39,8 +40,9 @@ func TestFixedProfileCredentialsRefreshesExpiredAccessToken(t *testing.T) {
 			tokenData.ExpiresAt = time.Now().Add(time.Hour)
 			return nil
 		},
-		resetTokenCache: func() {
-			resetCalls++
+		cacheToken: func(profile, token string) {
+			cachedProfile = profile
+			cachedToken = token
 		},
 	}
 
@@ -50,8 +52,8 @@ func TestFixedProfileCredentialsRefreshesExpiredAccessToken(t *testing.T) {
 	if refreshCalls != 1 {
 		t.Fatalf("refresh calls = %d, want 1", refreshCalls)
 	}
-	if resetCalls != 1 {
-		t.Fatalf("reset calls = %d, want 1", resetCalls)
+	if cachedProfile != "ding-test" || cachedToken != "fresh" {
+		t.Fatalf("cached profile/token = %q/%q, want ding-test/fresh", cachedProfile, cachedToken)
 	}
 	if err := credentials.Ready(context.Background()); err != nil {
 		t.Fatalf("Ready() error = %v", err)
@@ -75,7 +77,7 @@ func TestFixedProfileCredentialsReadyIsReadOnly(t *testing.T) {
 			refreshCalls++
 			return nil
 		},
-		resetTokenCache: func() {},
+		cacheToken: func(string, string) {},
 	}
 
 	if err := credentials.Ready(context.Background()); err == nil {
@@ -89,6 +91,13 @@ func TestFixedProfileCredentialsReadyIsReadOnly(t *testing.T) {
 func TestFixedProfileCredentialsLoadsCorpSlotWithoutRegistry(t *testing.T) {
 	t.Setenv(keychain.DisableKeychainEnv, "1")
 	configDir := t.TempDir()
+	previousProfile := authpkg.RuntimeProfile()
+	authpkg.SetRuntimeProfile("corp-fixed")
+	ResetRuntimeTokenCache()
+	t.Cleanup(func() {
+		authpkg.SetRuntimeProfile(previousProfile)
+		ResetRuntimeTokenCache()
+	})
 	if err := authpkg.SaveTokenDataKeychainForCorpID("corp-fixed", &authpkg.TokenData{
 		AccessToken:  "access",
 		RefreshToken: "refresh",
@@ -105,6 +114,9 @@ func TestFixedProfileCredentialsLoadsCorpSlotWithoutRegistry(t *testing.T) {
 	credentials := newFixedProfileCredentials(configDir, "corp-fixed")
 	if err := credentials.Ensure(context.Background()); err != nil {
 		t.Fatalf("Ensure() error = %v, want direct corp-slot load", err)
+	}
+	if token := getCachedRuntimeToken(context.Background()); token != "access" {
+		t.Fatalf("cached runtime token = %q, want access without reloading profiles.json", token)
 	}
 }
 

@@ -21,10 +21,10 @@ import (
 const serviceCredentialRefreshInterval = time.Minute
 
 type fixedProfileCredentials struct {
-	profile         string
-	load            func() (*authpkg.TokenData, error)
-	refresh         func(context.Context) error
-	resetTokenCache func()
+	profile    string
+	load       func() (*authpkg.TokenData, error)
+	refresh    func(context.Context) error
+	cacheToken func(string, string)
 
 	ensureMu sync.Mutex
 }
@@ -39,7 +39,7 @@ func newFixedProfileCredentials(configDir, profile string) *fixedProfileCredenti
 		refresh: func(ctx context.Context) error {
 			provider := authpkg.NewOAuthProvider(configDir, nil)
 			configureOAuthProviderCompatibility(provider, configDir)
-			token, err := provider.GetAccessToken(ctx)
+			token, err := provider.GetAccessTokenForCorpID(ctx, profile)
 			if err != nil {
 				return err
 			}
@@ -48,7 +48,7 @@ func newFixedProfileCredentials(configDir, profile string) *fixedProfileCredenti
 			}
 			return nil
 		},
-		resetTokenCache: ResetRuntimeTokenCache,
+		cacheToken: cacheRuntimeToken,
 	}
 }
 
@@ -75,7 +75,7 @@ func (c *fixedProfileCredentials) Ensure(ctx context.Context) error {
 			return fmt.Errorf("fixed DWS service profile has no valid access token after refresh")
 		}
 	}
-	c.resetTokenCache()
+	c.cacheToken(c.profile, tokenData.AccessToken)
 	return nil
 }
 

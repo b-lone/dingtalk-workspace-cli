@@ -822,10 +822,7 @@ var (
 // getCachedRuntimeToken returns a cached access token, loading it only once per process.
 // This avoids repeated Keychain access which takes ~70ms each time.
 func getCachedRuntimeToken(ctx context.Context) string {
-	cacheKey := strings.TrimSpace(authpkg.RuntimeProfile())
-	if cacheKey == "" {
-		cacheKey = "__default__"
-	}
+	cacheKey := runtimeTokenCacheKey(authpkg.RuntimeProfile())
 	cachedRuntimeTokenMu.Lock()
 	if token := cachedRuntimeTokens[cacheKey]; token != "" {
 		cachedRuntimeTokenMu.Unlock()
@@ -849,6 +846,26 @@ func getCachedRuntimeToken(ctx context.Context) string {
 	cachedRuntimeTokens[cacheKey] = token
 	cachedRuntimeTokenMu.Unlock()
 	return token
+}
+
+func runtimeTokenCacheKey(profile string) string {
+	profile = strings.TrimSpace(profile)
+	if profile == "" {
+		return "__default__"
+	}
+	return profile
+}
+
+func cacheRuntimeToken(profile, token string) {
+	profile = runtimeTokenCacheKey(profile)
+	token = strings.TrimSpace(token)
+	cachedRuntimeTokenMu.Lock()
+	defer cachedRuntimeTokenMu.Unlock()
+	if token == "" {
+		delete(cachedRuntimeTokens, profile)
+		return
+	}
+	cachedRuntimeTokens[profile] = token
 }
 
 // generateExecutionID returns a random 16-char hex string used to correlate

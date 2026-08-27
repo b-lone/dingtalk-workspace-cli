@@ -578,6 +578,43 @@ func (p *OAuthProvider) GetAccessToken(ctx context.Context) (string, error) {
 	return "", errors.New(i18n.T("所有凭证已失效，请运行 dws auth login 重新登录"))
 }
 
+// GetAccessTokenForCorpID returns a valid access token from one immutable
+// corp-scoped credential slot. It deliberately does not read or update the
+// profile registry; callers must resolve and authorize the corpId first.
+func (p *OAuthProvider) GetAccessTokenForCorpID(ctx context.Context, corpID string) (string, error) {
+	corpID = strings.TrimSpace(corpID)
+	if corpID == "" {
+		return "", fmt.Errorf("corpId is required for profile token refresh")
+	}
+	data, err := loadTokenDataForCorpID(corpID)
+	if err != nil {
+		return "", err
+	}
+	if data.IsAccessTokenValid() {
+		return data.AccessToken, nil
+	}
+	if !data.IsRefreshTokenValid() {
+		return "", fmt.Errorf("fixed DWS service profile credentials are expired")
+	}
+
+	refreshed, err := p.lockedRefreshForCorpID(ctx, corpID)
+	if err != nil {
+		return "", fmt.Errorf("refresh corp-scoped token %q: %w", corpID, err)
+	}
+	return refreshed.AccessToken, nil
+}
+
+func loadTokenDataForCorpID(corpID string) (*TokenData, error) {
+	data, err := LoadTokenDataKeychainForCorpID(corpID)
+	if err != nil {
+		return nil, err
+	}
+	if data == nil || strings.TrimSpace(data.CorpID) != corpID {
+		return nil, fmt.Errorf("corp-scoped token identity does not match %q", corpID)
+	}
+	return data, nil
+}
+
 // lockedRefresh attempts to refresh the token while holding dual-layer locks.
 // It uses a double-check pattern with both process-level and file-level locking:
 //
@@ -634,6 +671,37 @@ func (p *OAuthProvider) lockedRefresh(ctx context.Context) (*TokenData, error) {
 		p.logger.Debug("refreshing token (dual-locked)")
 	}
 	return p.refreshWithRefreshToken(ctx, data)
+}
+
+func (p *OAuthProvider) lockedRefreshForCorpID(ctx context.Context, corpID string) (*TokenData, error) {
+	lock, err := AcquireDualLock(ctx, p.configDir)
+	if err != nil {
+		return nil, fmt.Errorf("acquiring dual lock: %w", err)
+	}
+	defer lock.Release()
+
+	data, err := loadTokenDataForCorpID(corpID)
+	if err != nil {
+		return nil, err
+	}
+	if data.IsAccessTokenValid() {
+		return data, nil
+	}
+	if !data.IsRefreshTokenValid() {
+		return nil, fmt.Errorf("refresh_token 已过期")
+	}
+
+	updated, err := p.refreshTokenData(ctx, data)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(updated.CorpID) != corpID {
+		return nil, fmt.Errorf("refreshed token identity does not match %q", corpID)
+	}
+	if err := SaveTokenDataKeychainForCorpID(corpID, updated); err != nil {
+		return nil, fmt.Errorf("保存刷新后的 profile token 失败（旧 refresh_token 已失效，请重新登录）: %w", err)
+	}
+	return updated, nil
 }
 
 // ExchangeAuthCode takes an AuthCode and an optional UserID provided by an
