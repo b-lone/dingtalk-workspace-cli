@@ -141,6 +141,17 @@ func TestServerExecutesStrictJSONRequest(t *testing.T) {
 		t.Fatalf("blank profile status = %d, want 400", blankProfile.Code)
 	}
 
+	nullProfile := performRequest(
+		server.Handler(),
+		http.MethodPost,
+		"/v1/commands/sample.run/execute",
+		`{"profile":null,"arguments":{}}`,
+		testBearerToken,
+	)
+	if nullProfile.Code != http.StatusBadRequest {
+		t.Fatalf("null profile status = %d, want 400", nullProfile.Code)
+	}
+
 	request := httptest.NewRequest(http.MethodPost, "/v1/commands/sample.run/execute", strings.NewReader(`{"arguments":{}}`))
 	request.Header.Set("Content-Type", "text/plain")
 	request.Header.Set("Authorization", "Bearer "+testBearerToken)

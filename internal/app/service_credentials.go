@@ -5,6 +5,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	authpkg "github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/auth"
+	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/commandservice"
 	apperrors "github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/errors"
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/executor"
 )
@@ -109,8 +111,9 @@ type profileCredentialRunner struct {
 	refreshInterval time.Duration
 
 	executionMu sync.Mutex
-	startOnce   sync.Once
-	closeOnce   sync.Once
+	lifecycleMu sync.Mutex
+	started     bool
+	closed      bool
 	cancel      context.CancelFunc
 	done        chan struct{}
 }
@@ -131,19 +134,19 @@ func (r *profileCredentialRunner) RunWithProfile(ctx context.Context, selector s
 	if selector != "" {
 		resolved, err := r.resolveProfile(selector)
 		if err != nil {
-			return executor.Result{}, apperrors.NewAuth(
-				"DWS service profile is unavailable",
-				apperrors.WithReason("profile_unavailable"),
-				apperrors.WithCause(err),
-			)
+			if errors.Is(err, authpkg.ErrProfileNotFound) || errors.Is(err, authpkg.ErrProfileAmbiguous) {
+				return executor.Result{}, &commandservice.Error{
+					Code:    commandservice.CodeInvalidArguments,
+					Message: err.Error(),
+					Cause:   err,
+				}
+			}
+			return executor.Result{}, fmt.Errorf("resolve DWS service profile %q: %w", selector, err)
 		}
 		profile = strings.TrimSpace(resolved)
 	}
 	if profile == "" {
-		return executor.Result{}, apperrors.NewAuth(
-			"DWS service profile is unavailable",
-			apperrors.WithReason("profile_unavailable"),
-		)
+		return executor.Result{}, fmt.Errorf("resolved DWS service profile has no corpId")
 	}
 
 	previousProfile := authpkg.RuntimeProfile()
@@ -161,22 +164,29 @@ func (r *profileCredentialRunner) RunWithProfile(ctx context.Context, selector s
 }
 
 func (r *profileCredentialRunner) Start(parent context.Context) {
-	r.startOnce.Do(func() {
-		ctx, cancel := context.WithCancel(parent)
-		r.cancel = cancel
-		r.done = make(chan struct{})
-		go r.maintain(ctx)
-	})
+	r.lifecycleMu.Lock()
+	defer r.lifecycleMu.Unlock()
+	if r.started || r.closed {
+		return
+	}
+	ctx, cancel := context.WithCancel(parent)
+	r.cancel = cancel
+	r.done = make(chan struct{})
+	r.started = true
+	go r.maintain(ctx)
 }
 
 func (r *profileCredentialRunner) Close() {
-	r.closeOnce.Do(func() {
-		if r.cancel == nil {
-			return
-		}
-		r.cancel()
-		<-r.done
-	})
+	r.lifecycleMu.Lock()
+	r.closed = true
+	cancel := r.cancel
+	done := r.done
+	r.lifecycleMu.Unlock()
+	if cancel == nil || done == nil {
+		return
+	}
+	cancel()
+	<-done
 }
 
 func (r *profileCredentialRunner) maintain(ctx context.Context) {

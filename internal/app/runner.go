@@ -119,6 +119,14 @@ func logHostOwnedPATDecisionOnce() {
 }
 
 func newCommandRunnerWithFlags(loader cli.CatalogLoader, flags *GlobalFlags) executor.Runner {
+	return newCommandRunner(loader, flags, false)
+}
+
+func newHTTPCommandRunnerWithFlags(loader cli.CatalogLoader, flags *GlobalFlags) executor.Runner {
+	return newCommandRunner(loader, flags, true)
+}
+
+func newCommandRunner(loader cli.CatalogLoader, flags *GlobalFlags, disableAsyncTokenPrefetch bool) executor.Runner {
 	// Ensure DWS_CLIENT_ID env is populated from persisted config before
 	// resolveIdentityHeaders reads it.  This covers fresh-process cold starts
 	// where no env var has been inherited from a parent process.
@@ -135,26 +143,32 @@ func newCommandRunnerWithFlags(loader cli.CatalogLoader, flags *GlobalFlags) exe
 	transportClient := transport.NewClient(httpClient)
 	transportClient.FileLogger = FileLoggerInstance()
 	return &runtimeRunner{
-		loader:             loader,
-		transport:          transportClient,
-		globalFlags:        flags,
-		fallback:           executor.EchoRunner{},
-		scanner:            newRuntimeContentScanner(),
-		enforceContentScan: runtimeFlagEnabled(os.Getenv(runtimeContentScanEnforceEnv), false),
-		includeScanReport:  runtimeFlagEnabled(os.Getenv(runtimeContentScanReportOutputEnv), false),
+		loader:                    loader,
+		transport:                 transportClient,
+		globalFlags:               flags,
+		fallback:                  executor.EchoRunner{},
+		scanner:                   newRuntimeContentScanner(),
+		enforceContentScan:        runtimeFlagEnabled(os.Getenv(runtimeContentScanEnforceEnv), false),
+		includeScanReport:         runtimeFlagEnabled(os.Getenv(runtimeContentScanReportOutputEnv), false),
+		disableAsyncTokenPrefetch: disableAsyncTokenPrefetch,
+		prefetchToken: func(ctx context.Context) {
+			_ = getCachedRuntimeToken(ctx)
+		},
 	}
 }
 
 type runtimeRunner struct {
-	loader             cli.CatalogLoader
-	transport          *transport.Client
-	globalFlags        *GlobalFlags
-	fallback           executor.Runner
-	scanner            safety.Scanner
-	enforceContentScan bool
-	includeScanReport  bool
-	auditSink          audit.Sink
-	runtimeInitOnce    sync.Once
+	loader                    cli.CatalogLoader
+	transport                 *transport.Client
+	globalFlags               *GlobalFlags
+	fallback                  executor.Runner
+	scanner                   safety.Scanner
+	enforceContentScan        bool
+	includeScanReport         bool
+	auditSink                 audit.Sink
+	runtimeInitOnce           sync.Once
+	disableAsyncTokenPrefetch bool
+	prefetchToken             func(context.Context)
 }
 
 func (r *runtimeRunner) Run(ctx context.Context, invocation executor.Invocation) (executor.Result, error) {
@@ -212,7 +226,7 @@ func (r *runtimeRunner) runSingle(ctx context.Context, invocation executor.Invoc
 	// ~70ms on macOS; starting it here lets the load overlap with endpoint
 	// resolution and catalog loading below.
 	if prefetchToken {
-		go getCachedRuntimeToken(ctx)
+		r.startAsyncTokenPrefetch(ctx)
 	}
 
 	if shouldUseDirectRuntime(invocation) {
@@ -271,6 +285,19 @@ func (r *runtimeRunner) runSingle(ctx context.Context, invocation executor.Invoc
 		endpoint = toolEndpoint
 	}
 	return r.executeInvocation(ctx, endpoint, invocation)
+}
+
+func (r *runtimeRunner) startAsyncTokenPrefetch(ctx context.Context) {
+	if r == nil || r.disableAsyncTokenPrefetch {
+		return
+	}
+	prefetch := r.prefetchToken
+	if prefetch == nil {
+		prefetch = func(ctx context.Context) {
+			_ = getCachedRuntimeToken(ctx)
+		}
+	}
+	go prefetch(ctx)
 }
 
 type multiProfileSelection struct {

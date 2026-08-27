@@ -25,6 +25,33 @@ import (
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/commandservice"
 )
 
+type httpServiceProfile struct {
+	corpID    string
+	tokenData *authpkg.TokenData
+}
+
+func loadHTTPServiceProfile(configDir, selector string) (httpServiceProfile, error) {
+	registered, err := authpkg.ResolveProfileReadOnly(configDir, selector)
+	if err != nil {
+		return httpServiceProfile{}, err
+	}
+	if registered == nil || strings.TrimSpace(registered.CorpID) == "" {
+		return httpServiceProfile{}, fmt.Errorf("DWS service profile has no registered corpId")
+	}
+	corpID := strings.TrimSpace(registered.CorpID)
+	tokenData, err := authpkg.LoadTokenDataForProfileReadOnly(configDir, corpID)
+	if err != nil {
+		return httpServiceProfile{}, err
+	}
+	if tokenData == nil || strings.TrimSpace(tokenData.CorpID) == "" {
+		return httpServiceProfile{}, fmt.Errorf("DWS service profile token has no corpId")
+	}
+	if strings.TrimSpace(tokenData.CorpID) != corpID {
+		return httpServiceProfile{}, fmt.Errorf("DWS service profile token identity does not match registered corpId")
+	}
+	return httpServiceProfile{corpID: corpID, tokenData: tokenData}, nil
+}
+
 // NewHTTPCommandService builds the plugin-free runtime used by dwsd. The
 // startup profile remains the default identity while individual execute
 // requests may select another registered profile.
@@ -37,17 +64,18 @@ func NewHTTPCommandService(ctx context.Context, profile string, timeout time.Dur
 		return nil, fmt.Errorf("DWS service command timeout must be positive")
 	}
 	configDir := defaultConfigDir()
-	tokenData, err := authpkg.LoadTokenDataForProfileReadOnly(configDir, profile)
+	loadedProfile, err := loadHTTPServiceProfile(configDir, profile)
 	if err != nil {
 		return nil, fmt.Errorf("load fixed DWS service profile: %w", err)
 	}
+	tokenData := loadedProfile.tokenData
 	if tokenData == nil || strings.TrimSpace(tokenData.CorpID) == "" {
 		return nil, fmt.Errorf("fixed DWS service profile has no corpId")
 	}
 	if !tokenData.IsAccessTokenValid() && !tokenData.IsRefreshTokenValid() {
 		return nil, fmt.Errorf("fixed DWS service profile credentials are expired")
 	}
-	pinnedProfile := strings.TrimSpace(tokenData.CorpID)
+	pinnedProfile := loadedProfile.corpID
 	authpkg.SetRuntimeProfile(pinnedProfile)
 	credentials := newFixedProfileCredentials(configDir, pinnedProfile)
 	if err := credentials.Ensure(ctx); err != nil {
@@ -66,14 +94,14 @@ func NewHTTPCommandService(ctx context.Context, profile string, timeout time.Dur
 		Profile: pinnedProfile,
 		Timeout: int(math.Ceil(timeout.Seconds())),
 	}
-	commandRunner := newCommandRunnerWithFlags(cli.NewEnvironmentLoader(), flags)
+	commandRunner := newHTTPCommandRunnerWithFlags(cli.NewEnvironmentLoader(), flags)
 	credentialsByProfile := map[string]*fixedProfileCredentials{
 		pinnedProfile: credentials,
 	}
 	profileRunner := &profileCredentialRunner{
 		defaultProfile: pinnedProfile,
 		resolveProfile: func(selector string) (string, error) {
-			selected, err := authpkg.LoadTokenDataForProfileReadOnly(configDir, selector)
+			selected, err := authpkg.ResolveProfileReadOnly(configDir, selector)
 			if err != nil {
 				return "", err
 			}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	authpkg "github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/auth"
+	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/commandservice"
 	apperrors "github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/errors"
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/executor"
 )
@@ -171,6 +172,46 @@ func TestProfileCredentialRunnerSelectsAndRestoresProfile(t *testing.T) {
 	}
 }
 
+func TestProfileCredentialRunnerClassifiesSelectorErrors(t *testing.T) {
+	t.Run("unknown profile is invalid arguments", func(t *testing.T) {
+		next := &recordingRunner{}
+		runner := &profileCredentialRunner{
+			defaultProfile: "ding-default",
+			resolveProfile: func(string) (string, error) {
+				return "", authpkg.ErrProfileNotFound
+			},
+			ensureProfile: func(context.Context, string) error { return nil },
+			next:          next,
+		}
+
+		_, err := runner.RunWithProfile(context.Background(), "missing", executor.Invocation{})
+		var serviceErr *commandservice.Error
+		if !errors.As(err, &serviceErr) || serviceErr.Code != commandservice.CodeInvalidArguments {
+			t.Fatalf("RunWithProfile() error = %#v, want invalid_arguments", err)
+		}
+		if next.called {
+			t.Fatal("command ran for an unknown profile")
+		}
+	})
+
+	t.Run("registry failure is not an auth outage", func(t *testing.T) {
+		runner := &profileCredentialRunner{
+			defaultProfile: "ding-default",
+			resolveProfile: func(string) (string, error) {
+				return "", errors.New("parse profiles")
+			},
+			ensureProfile: func(context.Context, string) error { return nil },
+			next:          &recordingRunner{},
+		}
+
+		_, err := runner.RunWithProfile(context.Background(), "Alibaba", executor.Invocation{})
+		var authErr *apperrors.Error
+		if err == nil || errors.As(err, &authErr) {
+			t.Fatalf("RunWithProfile() error = %#v, want non-auth internal error", err)
+		}
+	})
+}
+
 func TestProfileCredentialRunnerMaintainsDefaultProfile(t *testing.T) {
 	previousProfile := authpkg.RuntimeProfile()
 	authpkg.SetRuntimeProfile("outside")
@@ -215,6 +256,32 @@ func TestProfileCredentialRunnerMaintainsDefaultProfile(t *testing.T) {
 	}
 }
 
+func TestProfileCredentialRunnerDoesNotStartAfterClose(t *testing.T) {
+	maintained := make(chan struct{}, 1)
+	runner := &profileCredentialRunner{
+		defaultProfile: "ding-default",
+		resolveProfile: func(string) (string, error) {
+			return "", errors.New("must not resolve the default profile")
+		},
+		ensureProfile: func(context.Context, string) error {
+			maintained <- struct{}{}
+			return nil
+		},
+		next:            &runtimeProfileRunner{},
+		refreshInterval: time.Millisecond,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	runner.Close()
+	runner.Start(ctx)
+	select {
+	case <-maintained:
+		t.Fatal("credential maintenance started after the runner was closed")
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
 func TestProfileCredentialRunnerSerializesProfileSelection(t *testing.T) {
 	previousProfile := authpkg.RuntimeProfile()
 	authpkg.SetRuntimeProfile("ding-default")
@@ -253,18 +320,15 @@ func TestProfileCredentialRunnerSerializesProfileSelection(t *testing.T) {
 				return "", errors.New("unknown test profile")
 			}
 		},
-		ensureProfile: func(_ context.Context, profile string) error {
-			switch profile {
-			case "ding-first":
-				close(firstEntered)
-				<-releaseFirst
-			case "ding-second":
-				close(secondEntered)
-				<-releaseSecond
-			}
+		ensureProfile: func(context.Context, string) error {
 			return nil
 		},
-		next: &runtimeProfileRunner{},
+		next: &blockingRuntimeProfileRunner{
+			firstEntered:  firstEntered,
+			secondEntered: secondEntered,
+			releaseFirst:  releaseFirst,
+			releaseSecond: releaseSecond,
+		},
 	}
 
 	go func() {
@@ -308,6 +372,25 @@ func (r *recordingRunner) Run(context.Context, executor.Invocation) (executor.Re
 
 type runtimeProfileRunner struct {
 	profiles []string
+}
+
+type blockingRuntimeProfileRunner struct {
+	firstEntered  chan struct{}
+	secondEntered chan struct{}
+	releaseFirst  chan struct{}
+	releaseSecond chan struct{}
+}
+
+func (r *blockingRuntimeProfileRunner) Run(_ context.Context, invocation executor.Invocation) (executor.Result, error) {
+	switch authpkg.RuntimeProfile() {
+	case "ding-first":
+		close(r.firstEntered)
+		<-r.releaseFirst
+	case "ding-second":
+		close(r.secondEntered)
+		<-r.releaseSecond
+	}
+	return executor.Result{Invocation: invocation}, nil
 }
 
 func (r *runtimeProfileRunner) Run(_ context.Context, invocation executor.Invocation) (executor.Result, error) {

@@ -14,6 +14,7 @@
 package auth
 
 import (
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -332,6 +333,36 @@ func TestUpsertProfileFromTokenPromotesCorpIDNameToCorpName(t *testing.T) {
 	}
 	if resolved.CorpID != "corp_same" {
 		t.Fatalf("resolved corpId = %q, want corp_same", resolved.CorpID)
+	}
+}
+
+func TestResolveProfileReadOnlyUsesRegisteredIdentityAndTypedErrors(t *testing.T) {
+	configDir := t.TempDir()
+	if err := SaveProfiles(configDir, &ProfilesConfig{
+		Version:        1,
+		PrimaryProfile: "corp-alibaba",
+		CurrentProfile: "corp-alibaba",
+		Profiles: []Profile{
+			{Name: "Alibaba", CorpID: "corp-alibaba", CorpName: "same-name"},
+			{Name: "DingTalk", CorpID: "corp-dingtalk", CorpName: "same-name"},
+		},
+	}); err != nil {
+		t.Fatalf("SaveProfiles() error = %v", err)
+	}
+
+	profile, err := ResolveProfileReadOnly(configDir, "Alibaba")
+	if err != nil {
+		t.Fatalf("ResolveProfileReadOnly() error = %v", err)
+	}
+	if profile == nil || profile.CorpID != "corp-alibaba" {
+		t.Fatalf("resolved profile = %#v, want corp-alibaba", profile)
+	}
+
+	if _, err := ResolveProfileReadOnly(configDir, "missing"); !errors.Is(err, ErrProfileNotFound) {
+		t.Fatalf("missing profile error = %v, want ErrProfileNotFound", err)
+	}
+	if _, err := ResolveProfileReadOnly(configDir, "same-name"); !errors.Is(err, ErrProfileAmbiguous) {
+		t.Fatalf("ambiguous profile error = %v, want ErrProfileAmbiguous", err)
 	}
 }
 

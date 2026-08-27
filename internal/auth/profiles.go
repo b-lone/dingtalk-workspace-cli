@@ -16,6 +16,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -51,6 +52,13 @@ const (
 	ProfileStatusActive  = "active"
 	ProfileStatusExpired = "expired"
 	ProfileStatusRevoked = "revoked"
+)
+
+var (
+	// ErrProfileNotFound means no registered profile matches the selector.
+	ErrProfileNotFound = errors.New("profile not found")
+	// ErrProfileAmbiguous means a non-corpId selector matches multiple profiles.
+	ErrProfileAmbiguous = errors.New("profile selector is ambiguous")
 )
 
 // ProfilesConfig stores non-sensitive profile metadata. Token material stays in keychain.
@@ -317,6 +325,69 @@ func ResolveProfile(configDir, selector string) (*Profile, error) {
 		return p, nil
 	}
 	return nil, nil
+}
+
+// ResolveProfileReadOnly resolves registered profile metadata without
+// migrating, repairing, or mutating the authentication store.
+func ResolveProfileReadOnly(configDir, selector string) (*Profile, error) {
+	cfg, err := LoadProfilesReadOnly(configDir)
+	if err != nil {
+		return nil, err
+	}
+	selector = strings.TrimSpace(selector)
+	if selector != "" {
+		return resolveRegisteredProfile(cfg, selector)
+	}
+	for _, candidate := range []string{cfg.CurrentProfile, cfg.PrimaryProfile} {
+		if profile := findProfile(cfg, candidate); profile != nil {
+			copy := *profile
+			return &copy, nil
+		}
+	}
+	return nil, ErrProfileNotFound
+}
+
+func resolveRegisteredProfile(cfg *ProfilesConfig, selector string) (*Profile, error) {
+	selector = strings.TrimSpace(selector)
+	if selector == "" {
+		return nil, ErrProfileNotFound
+	}
+	for i := range cfg.Profiles {
+		if cfg.Profiles[i].CorpID == selector {
+			copy := cfg.Profiles[i]
+			return &copy, nil
+		}
+	}
+
+	var match *Profile
+	for i := range cfg.Profiles {
+		if cfg.Profiles[i].Name != selector {
+			continue
+		}
+		if match != nil {
+			return nil, fmt.Errorf("%w: %q", ErrProfileAmbiguous, selector)
+		}
+		copy := cfg.Profiles[i]
+		match = &copy
+	}
+	if match != nil {
+		return match, nil
+	}
+
+	for i := range cfg.Profiles {
+		if strings.TrimSpace(cfg.Profiles[i].CorpName) != selector {
+			continue
+		}
+		if match != nil {
+			return nil, fmt.Errorf("%w: %q", ErrProfileAmbiguous, selector)
+		}
+		copy := cfg.Profiles[i]
+		match = &copy
+	}
+	if match != nil {
+		return match, nil
+	}
+	return nil, fmt.Errorf("%w: %q", ErrProfileNotFound, selector)
 }
 
 func resolveProfileForLoad(configDir, selector string) (*Profile, error) {

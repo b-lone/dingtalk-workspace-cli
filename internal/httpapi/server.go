@@ -50,10 +50,10 @@ type Server struct {
 }
 
 type executeRequest struct {
-	Profile   *string        `json:"profile,omitempty"`
-	Arguments map[string]any `json:"arguments"`
-	Confirmed bool           `json:"confirmed,omitempty"`
-	DryRun    bool           `json:"dry_run,omitempty"`
+	Profile   json.RawMessage `json:"profile,omitempty"`
+	Arguments map[string]any  `json:"arguments"`
+	Confirmed bool            `json:"confirmed,omitempty"`
+	DryRun    bool            `json:"dry_run,omitempty"`
 }
 
 type responseEnvelope struct {
@@ -209,8 +209,16 @@ func (s *Server) handleExecute(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	profile := ""
-	if input.Profile != nil {
-		profile = strings.TrimSpace(*input.Profile)
+	if len(input.Profile) != 0 {
+		var providedProfile string
+		if err := json.Unmarshal(input.Profile, &providedProfile); err != nil {
+			s.writeError(writer, request, http.StatusBadRequest, errorPayload{
+				Code:    commandservice.CodeInvalidArguments,
+				Message: "profile must be a string when provided",
+			})
+			return
+		}
+		profile = strings.TrimSpace(providedProfile)
 		if profile == "" {
 			s.writeError(writer, request, http.StatusBadRequest, errorPayload{
 				Code:    commandservice.CodeInvalidArguments,
