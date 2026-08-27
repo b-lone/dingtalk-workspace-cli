@@ -39,7 +39,7 @@ func loadHTTPServiceProfile(configDir, selector string) (httpServiceProfile, err
 		return httpServiceProfile{}, fmt.Errorf("DWS service profile has no registered corpId")
 	}
 	corpID := strings.TrimSpace(registered.CorpID)
-	tokenData, err := authpkg.LoadTokenDataForProfileReadOnly(configDir, corpID)
+	tokenData, err := authpkg.LoadTokenDataKeychainForCorpID(corpID)
 	if err != nil {
 		return httpServiceProfile{}, err
 	}

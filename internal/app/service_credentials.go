@@ -30,10 +30,11 @@ type fixedProfileCredentials struct {
 }
 
 func newFixedProfileCredentials(configDir, profile string) *fixedProfileCredentials {
+	profile = strings.TrimSpace(profile)
 	return &fixedProfileCredentials{
-		profile: strings.TrimSpace(profile),
+		profile: profile,
 		load: func() (*authpkg.TokenData, error) {
-			return authpkg.LoadTokenDataForProfileReadOnly(configDir, profile)
+			return authpkg.LoadTokenDataKeychainForCorpID(profile)
 		},
 		refresh: func(ctx context.Context) error {
 			provider := authpkg.NewOAuthProvider(configDir, nil)
@@ -129,22 +130,22 @@ func (r *profileCredentialRunner) RunWithProfile(ctx context.Context, selector s
 		return r.next.Run(ctx, invocation)
 	}
 
-	profile := strings.TrimSpace(r.defaultProfile)
 	selector = strings.TrimSpace(selector)
-	if selector != "" {
-		resolved, err := r.resolveProfile(selector)
-		if err != nil {
-			if errors.Is(err, authpkg.ErrProfileNotFound) || errors.Is(err, authpkg.ErrProfileAmbiguous) {
-				return executor.Result{}, &commandservice.Error{
-					Code:    commandservice.CodeInvalidArguments,
-					Message: err.Error(),
-					Cause:   err,
-				}
-			}
-			return executor.Result{}, fmt.Errorf("resolve DWS service profile %q: %w", selector, err)
-		}
-		profile = strings.TrimSpace(resolved)
+	if selector == "" {
+		selector = strings.TrimSpace(r.defaultProfile)
 	}
+	resolved, err := r.resolveProfile(selector)
+	if err != nil {
+		if errors.Is(err, authpkg.ErrProfileNotFound) || errors.Is(err, authpkg.ErrProfileAmbiguous) {
+			return executor.Result{}, &commandservice.Error{
+				Code:    commandservice.CodeInvalidArguments,
+				Message: err.Error(),
+				Cause:   err,
+			}
+		}
+		return executor.Result{}, fmt.Errorf("resolve DWS service profile %q: %w", selector, err)
+	}
+	profile := strings.TrimSpace(resolved)
 	if profile == "" {
 		return executor.Result{}, fmt.Errorf("resolved DWS service profile has no corpId")
 	}

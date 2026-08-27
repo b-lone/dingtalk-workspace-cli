@@ -6,6 +6,7 @@ package app
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/commandservice"
 	apperrors "github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/errors"
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/executor"
+	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/keychain"
 )
 
 func TestFixedProfileCredentialsRefreshesExpiredAccessToken(t *testing.T) {
@@ -84,12 +86,37 @@ func TestFixedProfileCredentialsReadyIsReadOnly(t *testing.T) {
 	}
 }
 
+func TestFixedProfileCredentialsLoadsCorpSlotWithoutRegistry(t *testing.T) {
+	t.Setenv(keychain.DisableKeychainEnv, "1")
+	configDir := t.TempDir()
+	if err := authpkg.SaveTokenDataKeychainForCorpID("corp-fixed", &authpkg.TokenData{
+		AccessToken:  "access",
+		RefreshToken: "refresh",
+		ExpiresAt:    time.Now().Add(time.Hour),
+		RefreshExpAt: time.Now().Add(24 * time.Hour),
+		CorpID:       "corp-fixed",
+	}); err != nil {
+		t.Fatalf("SaveTokenDataKeychainForCorpID() error = %v", err)
+	}
+	if err := os.WriteFile(authpkg.ProfilesPath(configDir), []byte("{"), 0o600); err != nil {
+		t.Fatalf("WriteFile(profiles.json) error = %v", err)
+	}
+
+	credentials := newFixedProfileCredentials(configDir, "corp-fixed")
+	if err := credentials.Ensure(context.Background()); err != nil {
+		t.Fatalf("Ensure() error = %v, want direct corp-slot load", err)
+	}
+}
+
 func TestProfileCredentialRunnerStopsBeforeCommand(t *testing.T) {
 	next := &recordingRunner{}
 	runner := &profileCredentialRunner{
 		defaultProfile: "ding-test",
-		resolveProfile: func(string) (string, error) {
-			return "", errors.New("must not resolve credentials for dry-run")
+		resolveProfile: func(selector string) (string, error) {
+			if selector != "ding-test" {
+				t.Fatalf("default selector = %q, want ding-test", selector)
+			}
+			return "ding-test", nil
 		},
 		ensureProfile: func(context.Context, string) error {
 			return errors.New("unavailable")
@@ -115,7 +142,7 @@ func TestProfileCredentialRunnerPreservesDryRunBarrier(t *testing.T) {
 	runner := &profileCredentialRunner{
 		defaultProfile: "ding-test",
 		resolveProfile: func(string) (string, error) {
-			return "", errors.New("must not resolve the default profile")
+			return "", errors.New("must not resolve credentials for dry-run")
 		},
 		ensureProfile: func(context.Context, string) error {
 			return errors.New("must not load credentials")
@@ -173,6 +200,34 @@ func TestProfileCredentialRunnerSelectsAndRestoresProfile(t *testing.T) {
 }
 
 func TestProfileCredentialRunnerClassifiesSelectorErrors(t *testing.T) {
+	t.Run("default profile registry failure is internal", func(t *testing.T) {
+		next := &recordingRunner{}
+		ensureCalled := false
+		runner := &profileCredentialRunner{
+			defaultProfile: "ding-default",
+			resolveProfile: func(selector string) (string, error) {
+				if selector != "ding-default" {
+					t.Fatalf("default selector = %q, want ding-default", selector)
+				}
+				return "", errors.New("parse profiles")
+			},
+			ensureProfile: func(context.Context, string) error {
+				ensureCalled = true
+				return nil
+			},
+			next: next,
+		}
+
+		_, err := runner.Run(context.Background(), executor.Invocation{})
+		var authErr *apperrors.Error
+		if err == nil || errors.As(err, &authErr) {
+			t.Fatalf("Run() error = %#v, want non-auth internal error", err)
+		}
+		if ensureCalled || next.called {
+			t.Fatal("credentials or command ran after default profile registry failure")
+		}
+	})
+
 	t.Run("unknown profile is invalid arguments", func(t *testing.T) {
 		next := &recordingRunner{}
 		runner := &profileCredentialRunner{
