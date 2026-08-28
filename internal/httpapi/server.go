@@ -22,6 +22,7 @@ import (
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/cli"
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/commandservice"
 	apperrors "github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/errors"
+	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/hostcli"
 )
 
 type CommandService interface {
@@ -218,11 +219,11 @@ func (s *Server) handleExecute(writer http.ResponseWriter, request *http.Request
 			})
 			return
 		}
-		profile = strings.TrimSpace(providedProfile)
-		if profile == "" {
+		profile = providedProfile
+		if err := hostcli.ValidateProfileSelector(profile); err != nil {
 			s.writeError(writer, request, http.StatusBadRequest, errorPayload{
 				Code:    commandservice.CodeInvalidArguments,
-				Message: "profile must not be blank when provided",
+				Message: "profile must identify exactly one valid profile",
 			})
 			return
 		}

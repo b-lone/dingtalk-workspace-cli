@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.alibaba.dws-http</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__DWS_BINARY__</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>__DWS_WORKING_DIRECTORY__</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>__DWS_HOME__</string>
+        <key>USER</key>
+        <string>yuanzhan</string>
+        <key>LOGNAME</key>
+        <string>yuanzhan</string>
+        <key>LANG</key>
+        <string>en_US.UTF-8</string>
+        <key>LC_ALL</key>
+        <string>en_US.UTF-8</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>DWS_SERVICE_LISTEN_ADDR</key>
+        <string>127.0.0.1:8002</string>
+        <key>DWS_SERVICE_PROFILE_FILE</key>
+        <string>__DWS_PROFILE_FILE__</string>
+        <key>DWS_SERVICE_TOKEN_FILE</key>
+        <string>__DWS_TOKEN_FILE__</string>
+        <key>DWS_SERVICE_WRAPPER_PATH</key>
+        <string>__DWS_WRAPPER_PATH__</string>
+        <key>DWS_SERVICE_COMMAND_TIMEOUT</key>
+        <string>30s</string>
+        <key>DWS_SERVICE_MAX_BODY_BYTES</key>
+        <string>1048576</string>
+        <key>DWS_SERVICE_MAX_OUTPUT_BYTES</key>
+        <string>16777216</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>StandardOutPath</key>
+    <string>__DWS_STDOUT_LOG__</string>
+    <key>StandardErrorPath</key>
+    <string>__DWS_STDERR_LOG__</string>
+</dict>
+</plist>

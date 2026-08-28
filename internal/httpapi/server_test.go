@@ -152,6 +152,26 @@ func TestServerExecutesStrictJSONRequest(t *testing.T) {
 		t.Fatalf("null profile status = %d, want 400", nullProfile.Code)
 	}
 
+	for _, profile := range []string{" corp ", "corp-a,corp-b", "corp\nnext", strings.Repeat("a", 256)} {
+		body, err := json.Marshal(map[string]any{
+			"profile":   profile,
+			"arguments": map[string]any{},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		invalidProfile := performRequest(
+			server.Handler(),
+			http.MethodPost,
+			"/v1/commands/sample.run/execute",
+			string(body),
+			testBearerToken,
+		)
+		if invalidProfile.Code != http.StatusBadRequest {
+			t.Fatalf("profile %q status = %d, want 400", profile, invalidProfile.Code)
+		}
+	}
+
 	request := httptest.NewRequest(http.MethodPost, "/v1/commands/sample.run/execute", strings.NewReader(`{"arguments":{}}`))
 	request.Header.Set("Content-Type", "text/plain")
 	request.Header.Set("Authorization", "Bearer "+testBearerToken)

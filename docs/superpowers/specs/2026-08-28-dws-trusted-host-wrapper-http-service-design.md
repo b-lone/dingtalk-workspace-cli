@@ -186,7 +186,7 @@ Bearer 和默认 profile 文件保持 0600。企业登录状态不迁移到 `/Us
 
 流水线步骤：
 
-1. 检出指定 Git revision，运行代码级测试并构建 Darwin arm64 `dwsd`。
+1. 检出指定 Git revision，完成代码级静态复核并构建 Darwin arm64 `dwsd`；本次发布不运行测试命令。
 2. 将二进制放入带 Git SHA 的不可变 release 目录，记录 SHA-256。
 3. 使用 8003 启动候选进程，验证 `/healthz`、`/readyz`、Schema、默认身份和 Alibaba 群基础信息。
 4. 候选验证成功后停止当前 8002 Docker 服务，原子切换 active release，并由 LaunchAgent 在 8002 启动。
@@ -222,7 +222,7 @@ Bearer 和默认 profile 文件保持 0600。企业登录状态不迁移到 `/Us
 
 完成必须同时具备：
 
-1. 目标分支测试通过，且没有未审查的通用 argv 执行面。
+1. 目标分支代码级静态复核通过，且没有未审查的通用 argv 执行面。
 2. Jenkins 构建成功。
 3. Snow 上运行的 LaunchAgent 对应目标 Git revision 和二进制 SHA-256。
 4. `127.0.0.1:8002/readyz` 返回 ready，当前用户 corpId 为 Alibaba。

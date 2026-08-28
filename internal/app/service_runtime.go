@@ -52,9 +52,8 @@ func loadHTTPServiceProfile(configDir, selector string) (httpServiceProfile, err
 	return httpServiceProfile{corpID: corpID, tokenData: tokenData}, nil
 }
 
-// NewHTTPCommandService builds the plugin-free runtime used by dwsd. The
-// startup profile remains the default identity while individual execute
-// requests may select another registered profile.
+// NewHTTPCommandService builds the direct embedded Core runtime. The trusted
+// host dwsd entrypoint uses NewHostHTTPCommandService instead.
 func NewHTTPCommandService(ctx context.Context, profile string, timeout time.Duration) (*commandservice.Service, error) {
 	profile = strings.TrimSpace(profile)
 	if profile == "" {

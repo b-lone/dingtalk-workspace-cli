@@ -13,6 +13,14 @@
 7. The embedded Catalog is a downstream release artifact and never backfills identity or participates in regeneration. Stable flag-to-interface property bindings come from the reviewed, content-addressed v3 manifest in `schema_parameter_bindings.json`; its exact active tuples, corrections, removals, and mapping exclusions are validated against the final bound `SchemaRegistry`. CLI `required` and constraints come from the resolved typed contract, while MCP `required` remains interface-only metadata.
 8. Agent selection results are fixed in versioned review inputs. Every public tool has explicit use/avoid/example and interface disposition metadata; Skill references that are not current leaves require an explicit alias/group/stale/out-of-surface review instead of fuzzy runtime matching.
 
+## Trusted Host HTTP Service
+
+`dwsd` is a Snow-hosted loopback HTTP adapter for Infinity. It preserves the authenticated canonical command and Schema contract, but executes only the six reviewed Infinity read commands through `/Users/yuanzhan/.qoderwork/bin/dws`. The wrapper remains the owner of the QoderWork enterprise session; `dwsd` never reads or persists its access token or enterprise credential headers.
+
+The daemon runs as the Snow login user under the `com.alibaba.dws-http` LaunchAgent and binds to `127.0.0.1:8002`. Each HTTP request is validated against the embedded `ToolSpec`, converted through a fixed canonical-command-to-CLI mapping and passed as independent argv values without a shell. The request `profile` selects one corpId for that invocation; an omitted profile uses the 0600 default profile file.
+
+Jenkins Job `donut-deploy-dws` is the only deployment owner. It stages an immutable Darwin arm64 release, verifies a candidate on port 8003, then atomically switches the LaunchAgent on port 8002. The previous host release or stopped Docker container is retained only as a deployment rollback point, never as a runtime fallback.
+
 ## Repository Structure
 
 - `cmd`: CLI entrypoint

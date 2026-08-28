@@ -46,7 +46,12 @@ func runServer() error {
 
 	processContext, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	service, err := app.NewHTTPCommandService(processContext, config.Profile, config.CommandTimeout)
+	service, err := app.NewHostHTTPCommandService(processContext, app.HostHTTPCommandServiceOptions{
+		WrapperPath:    config.WrapperPath,
+		Profile:        config.Profile,
+		CommandTimeout: config.CommandTimeout,
+		MaxOutputBytes: config.MaxOutputBytes,
+	})
 	if err != nil {
 		return err
 	}
