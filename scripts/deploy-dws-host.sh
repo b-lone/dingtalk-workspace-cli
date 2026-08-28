@@ -4,7 +4,7 @@ set -Eeuo pipefail
 umask 077
 
 readonly LABEL="com.alibaba.dws-http"
-readonly DEFAULT_SERVICE_ROOT="/Users/yuanzhan/Documents/Data/dws-service"
+readonly DEFAULT_SERVICE_ROOT="/Users/yuanzhan/Library/Application Support/DWSService"
 readonly DEFAULT_WRAPPER_PATH="/Users/yuanzhan/.qoderwork/bin/dws"
 readonly DEFAULT_LAUNCH_AGENT="/Users/yuanzhan/Library/LaunchAgents/${LABEL}.plist"
 
@@ -16,7 +16,8 @@ fail() {
 usage() {
     printf '%s\n' \
         "Usage: deploy-dws-host.sh --binary PATH --git-sha SHA --profile CORP_ID" \
-        "       --verify-group OPEN_CONVERSATION_ID --verify-title TITLE"
+        "       --verify-group OPEN_CONVERSATION_ID --verify-title TITLE" \
+        "       [--bootstrap-token EXISTING_HTTP_TOKEN_FILE]"
 }
 
 binary_path=""
@@ -24,6 +25,7 @@ git_sha=""
 profile=""
 verify_group=""
 verify_title=""
+bootstrap_token=""
 
 while (($# > 0)); do
     case "$1" in
@@ -52,6 +54,11 @@ while (($# > 0)); do
             verify_title="$2"
             shift 2
             ;;
+        --bootstrap-token)
+            (($# >= 2)) || fail "--bootstrap-token requires a value"
+            bootstrap_token="$2"
+            shift 2
+            ;;
         --help|-h)
             usage
             exit 0
@@ -72,8 +79,9 @@ done
 readonly service_root="${DWS_SERVICE_ROOT:-$DEFAULT_SERVICE_ROOT}"
 readonly wrapper_path="${DWS_SERVICE_WRAPPER_PATH:-$DEFAULT_WRAPPER_PATH}"
 readonly launch_agent="${DWS_LAUNCH_AGENT_PATH:-$DEFAULT_LAUNCH_AGENT}"
-readonly profile_file="${service_root}/secrets/profile"
-readonly token_file="${service_root}/secrets/http-token"
+readonly secrets_dir="${service_root}/secrets"
+readonly profile_file="${secrets_dir}/profile"
+readonly token_file="${secrets_dir}/http-token"
 readonly releases_dir="${service_root}/releases"
 readonly current_link="${service_root}/current"
 readonly log_dir="${service_root}/logs"
@@ -81,15 +89,24 @@ readonly template_path="$(cd "$(dirname "$0")/.." && pwd)/ops/${LABEL}.plist.tem
 readonly uid="$(id -u)"
 readonly launch_domain="gui/${uid}"
 readonly service_target="${launch_domain}/${LABEL}"
+readonly user_temp_dir="$(getconf DARWIN_USER_TEMP_DIR)"
 
 [[ "$service_root" = /* && "$launch_agent" = /* && "$wrapper_path" = /* ]] ||
     fail "service, LaunchAgent and wrapper paths must be absolute"
 [[ -f "$wrapper_path" && -x "$wrapper_path" ]] || fail "trusted DWS wrapper is unavailable"
 [[ -f "$template_path" ]] || fail "LaunchAgent template is unavailable"
-[[ -f "$token_file" ]] || fail "DWS HTTP token file is unavailable"
-[[ "$(stat -f '%Lp' "$token_file")" = "600" ]] || fail "DWS HTTP token file must have mode 600"
+[[ "$user_temp_dir" = /* && -d "$user_temp_dir" ]] || fail "Darwin user temporary directory is unavailable"
 
-mkdir -p "$releases_dir" "$log_dir" "$(dirname "$launch_agent")" "${service_root}/tmp"
+mkdir -p "$secrets_dir" "$releases_dir" "$log_dir" "$(dirname "$launch_agent")" "${service_root}/tmp"
+chmod 0700 "$service_root" "$secrets_dir"
+if [[ ! -f "$token_file" ]]; then
+    [[ "$bootstrap_token" = /* && -f "$bootstrap_token" ]] ||
+        fail "DWS HTTP token is unavailable and --bootstrap-token was not provided"
+    [[ "$(stat -f '%Lp' "$bootstrap_token")" = "600" ]] ||
+        fail "bootstrap DWS HTTP token file must have mode 600"
+    install -m 0600 "$bootstrap_token" "$token_file"
+fi
+[[ "$(stat -f '%Lp' "$token_file")" = "600" ]] || fail "DWS HTTP token file must have mode 600"
 
 readonly release_dir="${releases_dir}/${git_sha}"
 readonly release_binary="${release_dir}/dwsd"
@@ -187,6 +204,7 @@ start_candidate() {
         HOME="/Users/yuanzhan" \
         USER="yuanzhan" \
         LOGNAME="yuanzhan" \
+        TMPDIR="$user_temp_dir" \
         LANG="en_US.UTF-8" \
         LC_ALL="en_US.UTF-8" \
         PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
@@ -289,11 +307,11 @@ if [[ -n "$docker_container" ]] && [[ "$(docker inspect -f '{{.State.Running}}' 
 fi
 
 python3 - "$template_path" "${candidate_dir}/launch-agent.plist" \
-    "$current_link" "$profile_file" "$token_file" "$wrapper_path" "$log_dir" <<'PY'
+    "$current_link" "$profile_file" "$token_file" "$wrapper_path" "$log_dir" "$user_temp_dir" <<'PY'
 from pathlib import Path
 import sys
 
-source, target, current, profile, token, wrapper, logs = sys.argv[1:]
+source, target, current, profile, token, wrapper, logs, tmpdir = sys.argv[1:]
 text = Path(source).read_text(encoding="utf-8")
 replacements = {
     "__DWS_BINARY__": f"{current}/dwsd",
@@ -302,6 +320,7 @@ replacements = {
     "__DWS_PROFILE_FILE__": profile,
     "__DWS_TOKEN_FILE__": token,
     "__DWS_WRAPPER_PATH__": wrapper,
+    "__DWS_TMPDIR__": tmpdir,
     "__DWS_STDOUT_LOG__": f"{logs}/stdout.log",
     "__DWS_STDERR_LOG__": f"{logs}/stderr.log",
 }

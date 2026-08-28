@@ -17,7 +17,7 @@
 
 `dwsd` is a Snow-hosted loopback HTTP adapter for Infinity. It preserves the authenticated canonical command and Schema contract, but executes only the six reviewed Infinity read commands through `/Users/yuanzhan/.qoderwork/bin/dws`. The wrapper remains the owner of the QoderWork enterprise session; `dwsd` never reads or persists its access token or enterprise credential headers.
 
-The daemon runs as the Snow login user under the `com.alibaba.dws-http` LaunchAgent and binds to `127.0.0.1:8002`. Each HTTP request is validated against the embedded `ToolSpec`, converted through a fixed canonical-command-to-CLI mapping and passed as independent argv values without a shell. The request `profile` selects one corpId for that invocation; an omitted profile uses the 0600 default profile file.
+The daemon runs as the Snow login user under the `com.alibaba.dws-http` LaunchAgent and binds to `127.0.0.1:8002`. Its immutable releases, HTTP secrets and logs live under `~/Library/Application Support/DWSService`, outside macOS TCC-protected Documents. Each HTTP request is validated against the embedded `ToolSpec`, converted through a fixed canonical-command-to-CLI mapping and passed as independent argv values without a shell. The request `profile` selects one corpId for that invocation; an omitted profile uses the 0600 default profile file.
 
 Jenkins Job `donut-deploy-dws` is the only deployment owner. It stages an immutable Darwin arm64 release, verifies a candidate on port 8003, then atomically switches the LaunchAgent on port 8002. The previous host release or stopped Docker container is retained only as a deployment rollback point, never as a runtime fallback.
 

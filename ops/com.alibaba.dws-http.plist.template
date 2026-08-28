@@ -18,6 +18,8 @@
         <string>yuanzhan</string>
         <key>LOGNAME</key>
         <string>yuanzhan</string>
+        <key>TMPDIR</key>
+        <string>__DWS_TMPDIR__</string>
         <key>LANG</key>
         <string>en_US.UTF-8</string>
         <key>LC_ALL</key>

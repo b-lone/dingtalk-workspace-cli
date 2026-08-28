@@ -55,7 +55,7 @@ DingTalk MCP
 
 唯一凭据边界如下：
 
-- HTTP 服务只读取现有 0600 Bearer 文件和默认 profile 文件。
+- HTTP 服务只读取 `~/Library/Application Support/DWSService/secrets` 下的 0600 Bearer 文件和默认 profile 文件。
 - wrapper 自行访问 Snow 登录用户的 QoderWork/DWS 认证状态。
 - `dwsd` 不读取、不缓存、不返回 access token、refresh token 或企业凭据头。
 - LaunchAgent plist 只保存文件路径和非敏感运行参数，不保存密钥值。
@@ -173,12 +173,12 @@ Alibaba 环境将 Infinity 的 `dws.corp_id` 与 DWS 服务默认 profile 文件
 继续使用：
 
 - `DWS_SERVICE_LISTEN_ADDR=127.0.0.1:8002`
-- `DWS_SERVICE_PROFILE_FILE=/Users/yuanzhan/Documents/Data/dws-service/secrets/profile`
-- `DWS_SERVICE_TOKEN_FILE=/Users/yuanzhan/Documents/Data/dws-service/secrets/http-token`
+- `DWS_SERVICE_PROFILE_FILE=/Users/yuanzhan/Library/Application Support/DWSService/secrets/profile`
+- `DWS_SERVICE_TOKEN_FILE=/Users/yuanzhan/Library/Application Support/DWSService/secrets/http-token`
 - `DWS_SERVICE_COMMAND_TIMEOUT=30s`
 - `DWS_SERVICE_MAX_BODY_BYTES=1048576`
 
-Bearer 和默认 profile 文件保持 0600。企业登录状态不迁移到 `/Users/yuanzhan/Documents/Data/dws-service`。
+Bearer 和默认 profile 文件保持 0600。首次切换只从旧 Docker 服务目录复制现有 HTTP Bearer 作为安全引导，不复制企业凭据；企业登录状态继续保留在 Snow 登录用户的 QoderWork/DWS 认证状态中。服务运行目录使用 `~/Library/Application Support/DWSService`，避免 LaunchAgent 触发 macOS Documents TCC 限制。
 
 ## 部署与回滚
 
