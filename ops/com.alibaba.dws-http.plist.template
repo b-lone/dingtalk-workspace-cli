@@ -40,6 +40,8 @@
         <string>__DWS_CONFIG_DIR__</string>
         <key>DWS_KEYCHAIN_DIR</key>
         <string>__DWS_KEYCHAIN_DIR__</string>
+        <key>DWS_CHANNEL</key>
+        <string>__DWS_CHANNEL_CODE__</string>
         <key>DINGTALK_DWS_AGENTCODE</key>
         <string>__DWS_AGENT_CODE__</string>
     </dict>

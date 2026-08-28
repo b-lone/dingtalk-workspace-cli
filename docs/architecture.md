@@ -24,6 +24,7 @@ Service-owned state is isolated from desktop products:
 - `DWSService/state/config` owns the profile registry and DWS configuration.
 - `DWSService/state/keychain` owns the encrypted credential files; the macOS Keychain remains the DEK backend.
 - `DWSService/secrets` owns only the HTTP Bearer and default profile selector.
+- `DWS_CHANNEL` is the required registered DingTalk channel identity used by login and every business request.
 - `DINGTALK_DWS_AGENTCODE` is an explicit deployment input for the DWSService identity.
 
 Each HTTP request is validated against the embedded `ToolSpec`. The request `profile` selects one registered corpId for that invocation; an omitted profile uses the 0600 default profile file. Profile selection and credential refresh remain serialized inside the process. There is no wrapper, shell, generic argv boundary, or desktop-product fallback.
@@ -32,6 +33,7 @@ The bundled CLI is used only for explicit service authentication and maintenance
 
 ```bash
 scripts/dws-service-auth.sh \
+  --channel-code 51d4ceade40174304fc591dbf17448aeebf50328 \
   --agent-code dws-http-service \
   login --device
 ```
@@ -41,13 +43,14 @@ The first deployment must initialize the service-owned login state before candid
 ```bash
 DWS_SERVICE_CLI_BINARY=/absolute/path/to/dws \
 scripts/dws-service-auth.sh \
+  --channel-code 51d4ceade40174304fc591dbf17448aeebf50328 \
   --agent-code dws-http-service \
   login --device
 ```
 
 After the first login, deployment uses the returned corpId as `--profile`. A later re-authorization may pass that registered corpId to `dws auth login --profile` explicitly.
 
-Jenkins Job `donut-deploy-dws` is the only deployment owner. It builds `dwsd` and `dws` from the same Git revision, stages one immutable release, verifies a candidate on port 8003, then atomically switches the LaunchAgent on port 8002. Only the previous immutable host release is eligible for rollback; Docker and desktop-product binaries are not runtime or rollback dependencies.
+Jenkins Job `donut-deploy-dws` is the only deployment owner. It supplies the registered channel code to login and runtime, builds `dwsd` and `dws` from the same Git revision, stages one immutable release, verifies a candidate on port 8003, then atomically switches the LaunchAgent on port 8002. Only the previous immutable host release is eligible for rollback; Docker and desktop-product binaries are not runtime or rollback dependencies.
 
 ## Repository Structure
 

@@ -4,7 +4,7 @@
 
 状态：已废弃
 
-> 该方案曾通过 `~/.qoderwork/bin/dws` 提供企业身份，现已被自包含的 DWSService 架构替代。当前事实以 [`docs/architecture.md`](../../architecture.md) 为准：`dwsd` 内嵌 DWS Core，认证状态归 DWSService 所有，不再依赖 QoderWork、千问办公 wrapper 或桌面进程。
+> 该方案曾通过 `~/.qoderwork/bin/dws` 提供企业身份，现已被自包含的 DWSService 架构替代。后续验证确认，原 Wrapper 与裸 Core 的有效差异是已登记 `DWS_CHANNEL`；当前事实以 [`docs/architecture.md`](../../architecture.md) 为准：`dwsd` 内嵌 DWS Core，认证状态归 DWSService 所有，并在登录与业务请求中显式使用同一渠道码，不再依赖 QoderWork、千问办公 wrapper 或桌面进程。
 
 ## 结论
 
@@ -15,8 +15,8 @@ Infinity 对所有 DWS 请求显式发送其已配置的 `dws.corp_id` 作为 `p
 ## 背景与已验证事实
 
 1. Snow 主机上的 `/Users/yuanzhan/.qoderwork/bin/dws` 能以 Alibaba profile 查询群基础信息，并返回群名“构建通知”。
-2. 当前 Docker 服务的开源 Core 即使存在 Alibaba token，也会在企业 MCP 调用时返回 `ENTERPRISE_NOT_AUTHORIZED`；该运行路径不具备 QoderWork 私有 edition 的企业身份注入能力。
-3. 受信任 wrapper 通过本机 QoderWork 会话完成企业身份注入。凭据事实源是 Snow 登录用户的 QoderWork/DWS 认证状态，不是 Docker state、`profiles.json` 或 Infinity。
+2. 当裸 Core 缺少已登记 `DWS_CHANNEL` 时，即使存在 Alibaba token，企业 MCP 调用也会返回 `ENTERPRISE_NOT_AUTHORIZED`。
+3. 受信任 wrapper 当时通过宿主执行链路补齐渠道码；后续直接验证表明，裸 Core 显式设置相同 `DWS_CHANNEL` 后可独立完成同一群查询，不需要复制私有凭据头。
 4. Infinity 当前只依赖六个只读 DWS canonical command，并通过固定版本、catalog hash、surface hash 和 leaf Schema 校验服务契约。
 5. Infinity 的 `dws.corp_id` 已承担启动身份校验中的期望企业 corpId，适合作为同一运行时的显式 profile；应用 `org_id` 只是 Infinity 的业务组织键，不能替代 DWS profile。
 

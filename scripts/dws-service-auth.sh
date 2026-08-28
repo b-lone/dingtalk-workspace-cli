@@ -12,13 +12,19 @@ fail() {
 
 usage() {
     printf '%s\n' \
-        "Usage: dws-service-auth.sh --agent-code AGENT_CODE <auth arguments...>" \
-        "Example: dws-service-auth.sh --agent-code dws-http-service login --device"
+        "Usage: dws-service-auth.sh --channel-code CHANNEL_CODE --agent-code AGENT_CODE <auth arguments...>" \
+        "Example: dws-service-auth.sh --channel-code 51d4ceade40174304fc591dbf17448aeebf50328 --agent-code dws-http-service login --device"
 }
 
+channel_code=""
 agent_code=""
 while (($# > 0)); do
     case "$1" in
+        --channel-code)
+            (($# >= 2)) || fail "--channel-code requires a value"
+            channel_code="$2"
+            shift 2
+            ;;
         --agent-code)
             (($# >= 2)) || fail "--agent-code requires a value"
             agent_code="$2"
@@ -34,6 +40,7 @@ while (($# > 0)); do
     esac
 done
 
+[[ "$channel_code" =~ ^[A-Za-z0-9_-]{1,128}$ ]] || fail "--channel-code must match [A-Za-z0-9_-]{1,128}"
 [[ "$agent_code" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || fail "--agent-code must match [A-Za-z0-9_-]{1,64}"
 (($# > 0)) || fail "an auth command is required"
 
@@ -54,5 +61,6 @@ exec env \
     LOGNAME="yuanzhan" \
     DWS_CONFIG_DIR="$config_dir" \
     DWS_KEYCHAIN_DIR="$keychain_dir" \
+    DWS_CHANNEL="$channel_code" \
     DINGTALK_DWS_AGENTCODE="$agent_code" \
     "$dws_binary" auth "$@"

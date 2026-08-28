@@ -15,7 +15,8 @@ fail() {
 usage() {
     printf '%s\n' \
         "Usage: deploy-dws-host.sh --daemon-binary PATH --cli-binary PATH" \
-        "       --git-sha SHA --profile CORP_ID --agent-code AGENT_CODE" \
+        "       --git-sha SHA --profile CORP_ID --channel-code CHANNEL_CODE" \
+        "       --agent-code AGENT_CODE" \
         "       --verify-group OPEN_CONVERSATION_ID --verify-title TITLE" \
         "       [--bootstrap-token EXISTING_HTTP_TOKEN_FILE]"
 }
@@ -24,6 +25,7 @@ daemon_binary_path=""
 cli_binary_path=""
 git_sha=""
 profile=""
+channel_code=""
 agent_code=""
 verify_group=""
 verify_title=""
@@ -49,6 +51,11 @@ while (($# > 0)); do
         --profile)
             (($# >= 2)) || fail "--profile requires a value"
             profile="$2"
+            shift 2
+            ;;
+        --channel-code)
+            (($# >= 2)) || fail "--channel-code requires a value"
+            channel_code="$2"
             shift 2
             ;;
         --agent-code)
@@ -88,6 +95,7 @@ done
 [[ "$git_sha" =~ ^[0-9a-f]{40}$ ]] || fail "--git-sha must be a full lowercase Git SHA"
 [[ -n "$profile" && "$profile" != *','* && "$profile" != *$'\n'* && "$profile" != *$'\r'* ]] ||
     fail "--profile must identify one profile"
+[[ "$channel_code" =~ ^[A-Za-z0-9_-]{1,128}$ ]] || fail "--channel-code must match [A-Za-z0-9_-]{1,128}"
 [[ "$agent_code" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || fail "--agent-code must match [A-Za-z0-9_-]{1,64}"
 [[ -n "$verify_group" && -n "$verify_title" ]] || fail "verification group and title are required"
 
@@ -166,7 +174,7 @@ readonly source_cli_sha="$(shasum -a 256 "$cli_binary_path" | awk '{print $1}')"
 
 readonly profiles_file="${config_dir}/profiles.json"
 [[ -f "$profiles_file" && -r "$profiles_file" ]] ||
-    fail "DWSService profile registry is unavailable; run DWS_SERVICE_CLI_BINARY=\"${release_cli}\" scripts/dws-service-auth.sh --agent-code \"${agent_code}\" login --device before deploying"
+    fail "DWSService profile registry is unavailable; run DWS_SERVICE_CLI_BINARY=\"${release_cli}\" scripts/dws-service-auth.sh --channel-code \"${channel_code}\" --agent-code \"${agent_code}\" login --device before deploying"
 
 candidate_dir="$(mktemp -d "${service_root}/tmp/candidate.${git_sha}.XXXXXX")"
 candidate_pid=""
@@ -250,6 +258,7 @@ start_candidate() {
         DWS_SERVICE_MAX_BODY_BYTES="1048576" \
         DWS_CONFIG_DIR="$config_dir" \
         DWS_KEYCHAIN_DIR="$keychain_dir" \
+        DWS_CHANNEL="$channel_code" \
         DINGTALK_DWS_AGENTCODE="$agent_code" \
         "$release_daemon" \
         >"${candidate_dir}/stdout.log" \
@@ -334,11 +343,11 @@ fi
 
 python3 - "$template_path" "${candidate_dir}/launch-agent.plist" \
     "$current_link" "$profile_file" "$token_file" "$config_dir" "$keychain_dir" \
-    "$agent_code" "$log_dir" "$user_temp_dir" <<'PY'
+    "$channel_code" "$agent_code" "$log_dir" "$user_temp_dir" <<'PY'
 from pathlib import Path
 import sys
 
-source, target, current, profile, token, config, keychain, agent_code, logs, tmpdir = sys.argv[1:]
+source, target, current, profile, token, config, keychain, channel_code, agent_code, logs, tmpdir = sys.argv[1:]
 text = Path(source).read_text(encoding="utf-8")
 replacements = {
     "__DWS_BINARY__": f"{current}/dwsd",
@@ -348,6 +357,7 @@ replacements = {
     "__DWS_TOKEN_FILE__": token,
     "__DWS_CONFIG_DIR__": config,
     "__DWS_KEYCHAIN_DIR__": keychain,
+    "__DWS_CHANNEL_CODE__": channel_code,
     "__DWS_AGENT_CODE__": agent_code,
     "__DWS_TMPDIR__": tmpdir,
     "__DWS_STDOUT_LOG__": f"{logs}/stdout.log",
@@ -377,4 +387,5 @@ printf 'DWS_DEPLOYED_GIT_SHA=%s\n' "$git_sha"
 printf 'DWS_DEPLOYED_DAEMON_SHA256=%s\n' "$deployed_daemon_sha"
 printf 'DWS_DEPLOYED_CLI_SHA256=%s\n' "$deployed_cli_sha"
 printf 'DWS_DEPLOYED_PROFILE=%s\n' "$profile"
+printf 'DWS_DEPLOYED_CHANNEL_CODE=%s\n' "$channel_code"
 printf 'DWS_DEPLOYED_AGENT_CODE=%s\n' "$agent_code"
