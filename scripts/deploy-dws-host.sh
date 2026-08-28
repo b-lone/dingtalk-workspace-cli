@@ -5,7 +5,6 @@ umask 077
 
 readonly LABEL="com.alibaba.dws-http"
 readonly DEFAULT_SERVICE_ROOT="/Users/yuanzhan/Library/Application Support/DWSService"
-readonly DEFAULT_WRAPPER_PATH="/Users/yuanzhan/.qoderwork/bin/dws"
 readonly DEFAULT_LAUNCH_AGENT="/Users/yuanzhan/Library/LaunchAgents/${LABEL}.plist"
 
 fail() {
@@ -15,23 +14,31 @@ fail() {
 
 usage() {
     printf '%s\n' \
-        "Usage: deploy-dws-host.sh --binary PATH --git-sha SHA --profile CORP_ID" \
+        "Usage: deploy-dws-host.sh --daemon-binary PATH --cli-binary PATH" \
+        "       --git-sha SHA --profile CORP_ID --agent-code AGENT_CODE" \
         "       --verify-group OPEN_CONVERSATION_ID --verify-title TITLE" \
         "       [--bootstrap-token EXISTING_HTTP_TOKEN_FILE]"
 }
 
-binary_path=""
+daemon_binary_path=""
+cli_binary_path=""
 git_sha=""
 profile=""
+agent_code=""
 verify_group=""
 verify_title=""
 bootstrap_token=""
 
 while (($# > 0)); do
     case "$1" in
-        --binary)
-            (($# >= 2)) || fail "--binary requires a value"
-            binary_path="$2"
+        --daemon-binary)
+            (($# >= 2)) || fail "--daemon-binary requires a value"
+            daemon_binary_path="$2"
+            shift 2
+            ;;
+        --cli-binary)
+            (($# >= 2)) || fail "--cli-binary requires a value"
+            cli_binary_path="$2"
             shift 2
             ;;
         --git-sha)
@@ -42,6 +49,11 @@ while (($# > 0)); do
         --profile)
             (($# >= 2)) || fail "--profile requires a value"
             profile="$2"
+            shift 2
+            ;;
+        --agent-code)
+            (($# >= 2)) || fail "--agent-code requires a value"
+            agent_code="$2"
             shift 2
             ;;
         --verify-group)
@@ -69,17 +81,22 @@ while (($# > 0)); do
     esac
 done
 
-[[ "$binary_path" = /* ]] || fail "--binary must be an absolute path"
-[[ -f "$binary_path" && -x "$binary_path" ]] || fail "dwsd binary is unavailable or not executable"
+[[ "$daemon_binary_path" = /* ]] || fail "--daemon-binary must be an absolute path"
+[[ -f "$daemon_binary_path" && -x "$daemon_binary_path" ]] || fail "dwsd binary is unavailable or not executable"
+[[ "$cli_binary_path" = /* ]] || fail "--cli-binary must be an absolute path"
+[[ -f "$cli_binary_path" && -x "$cli_binary_path" ]] || fail "dws CLI binary is unavailable or not executable"
 [[ "$git_sha" =~ ^[0-9a-f]{40}$ ]] || fail "--git-sha must be a full lowercase Git SHA"
 [[ -n "$profile" && "$profile" != *','* && "$profile" != *$'\n'* && "$profile" != *$'\r'* ]] ||
     fail "--profile must identify one profile"
+[[ "$agent_code" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || fail "--agent-code must match [A-Za-z0-9_-]{1,64}"
 [[ -n "$verify_group" && -n "$verify_title" ]] || fail "verification group and title are required"
 
 readonly service_root="${DWS_SERVICE_ROOT:-$DEFAULT_SERVICE_ROOT}"
-readonly wrapper_path="${DWS_SERVICE_WRAPPER_PATH:-$DEFAULT_WRAPPER_PATH}"
 readonly launch_agent="${DWS_LAUNCH_AGENT_PATH:-$DEFAULT_LAUNCH_AGENT}"
 readonly secrets_dir="${service_root}/secrets"
+readonly state_dir="${service_root}/state"
+readonly config_dir="${state_dir}/config"
+readonly keychain_dir="${state_dir}/keychain"
 readonly profile_file="${secrets_dir}/profile"
 readonly token_file="${secrets_dir}/http-token"
 readonly releases_dir="${service_root}/releases"
@@ -91,14 +108,20 @@ readonly launch_domain="gui/${uid}"
 readonly service_target="${launch_domain}/${LABEL}"
 readonly user_temp_dir="$(getconf DARWIN_USER_TEMP_DIR)"
 
-[[ "$service_root" = /* && "$launch_agent" = /* && "$wrapper_path" = /* ]] ||
-    fail "service, LaunchAgent and wrapper paths must be absolute"
-[[ -f "$wrapper_path" && -x "$wrapper_path" ]] || fail "trusted DWS wrapper is unavailable"
+[[ "$service_root" = /* && "$launch_agent" = /* ]] ||
+    fail "service and LaunchAgent paths must be absolute"
 [[ -f "$template_path" ]] || fail "LaunchAgent template is unavailable"
 [[ "$user_temp_dir" = /* && -d "$user_temp_dir" ]] || fail "Darwin user temporary directory is unavailable"
 
-mkdir -p "$secrets_dir" "$releases_dir" "$log_dir" "$(dirname "$launch_agent")" "${service_root}/tmp"
-chmod 0700 "$service_root" "$secrets_dir"
+mkdir -p \
+    "$secrets_dir" \
+    "$config_dir" \
+    "$keychain_dir" \
+    "$releases_dir" \
+    "$log_dir" \
+    "$(dirname "$launch_agent")" \
+    "${service_root}/tmp"
+chmod 0700 "$service_root" "$secrets_dir" "$state_dir" "$config_dir" "$keychain_dir"
 if [[ ! -f "$token_file" ]]; then
     [[ "$bootstrap_token" = /* && -f "$bootstrap_token" ]] ||
         fail "DWS HTTP token is unavailable and --bootstrap-token was not provided"
@@ -109,25 +132,41 @@ fi
 [[ "$(stat -f '%Lp' "$token_file")" = "600" ]] || fail "DWS HTTP token file must have mode 600"
 
 readonly release_dir="${releases_dir}/${git_sha}"
-readonly release_binary="${release_dir}/dwsd"
+readonly release_daemon="${release_dir}/dwsd"
+readonly release_cli="${release_dir}/dws"
 if [[ -e "$release_dir" && ! -d "$release_dir" ]]; then
     fail "release path is not a directory"
 fi
 if [[ ! -d "$release_dir" ]]; then
     release_staging="$(mktemp -d "${releases_dir}/.${git_sha}.XXXXXX")"
-    install -m 0555 "$binary_path" "${release_staging}/dwsd"
+    install -m 0555 "$daemon_binary_path" "${release_staging}/dwsd"
+    install -m 0555 "$cli_binary_path" "${release_staging}/dws"
     printf '%s\n' "$git_sha" >"${release_staging}/git-revision"
-    shasum -a 256 "${release_staging}/dwsd" | awk '{print $1}' >"${release_staging}/sha256"
-    chmod 0444 "${release_staging}/git-revision" "${release_staging}/sha256"
+    shasum -a 256 "${release_staging}/dwsd" | awk '{print $1}' >"${release_staging}/dwsd.sha256"
+    shasum -a 256 "${release_staging}/dws" | awk '{print $1}' >"${release_staging}/dws.sha256"
+    chmod 0444 \
+        "${release_staging}/git-revision" \
+        "${release_staging}/dwsd.sha256" \
+        "${release_staging}/dws.sha256"
     mv "$release_staging" "$release_dir"
 fi
-[[ -x "$release_binary" ]] || fail "immutable release binary is unavailable"
+[[ -x "$release_daemon" ]] || fail "immutable dwsd binary is unavailable"
+[[ -x "$release_cli" ]] || fail "immutable dws CLI binary is unavailable"
 
-readonly deployed_binary_sha="$(shasum -a 256 "$release_binary" | awk '{print $1}')"
-readonly recorded_binary_sha="$(<"${release_dir}/sha256")"
-readonly source_binary_sha="$(shasum -a 256 "$binary_path" | awk '{print $1}')"
-[[ "$deployed_binary_sha" = "$recorded_binary_sha" ]] || fail "immutable release checksum mismatch"
-[[ "$deployed_binary_sha" = "$source_binary_sha" ]] || fail "existing release does not match the requested binary"
+readonly deployed_daemon_sha="$(shasum -a 256 "$release_daemon" | awk '{print $1}')"
+readonly recorded_daemon_sha="$(<"${release_dir}/dwsd.sha256")"
+readonly source_daemon_sha="$(shasum -a 256 "$daemon_binary_path" | awk '{print $1}')"
+readonly deployed_cli_sha="$(shasum -a 256 "$release_cli" | awk '{print $1}')"
+readonly recorded_cli_sha="$(<"${release_dir}/dws.sha256")"
+readonly source_cli_sha="$(shasum -a 256 "$cli_binary_path" | awk '{print $1}')"
+[[ "$deployed_daemon_sha" = "$recorded_daemon_sha" ]] || fail "immutable dwsd checksum mismatch"
+[[ "$deployed_daemon_sha" = "$source_daemon_sha" ]] || fail "existing dwsd does not match the requested binary"
+[[ "$deployed_cli_sha" = "$recorded_cli_sha" ]] || fail "immutable dws CLI checksum mismatch"
+[[ "$deployed_cli_sha" = "$source_cli_sha" ]] || fail "existing dws CLI does not match the requested binary"
+
+readonly profiles_file="${config_dir}/profiles.json"
+[[ -f "$profiles_file" && -r "$profiles_file" ]] ||
+    fail "DWSService profile registry is unavailable; run DWS_SERVICE_CLI_BINARY=\"${release_cli}\" scripts/dws-service-auth.sh --agent-code \"${agent_code}\" login --device before deploying"
 
 candidate_dir="$(mktemp -d "${service_root}/tmp/candidate.${git_sha}.XXXXXX")"
 candidate_pid=""
@@ -135,8 +174,6 @@ cutover_started="false"
 cutover_complete="false"
 previous_link=""
 previous_launch_loaded="false"
-docker_container=""
-docker_was_running="false"
 
 cleanup_candidate() {
     if [[ -n "$candidate_pid" ]] && kill -0 "$candidate_pid" 2>/dev/null; then
@@ -184,8 +221,6 @@ finalize() {
         fi
         if [[ "$previous_launch_loaded" = "true" && -f "$launch_agent" ]]; then
             launchctl bootstrap "$launch_domain" "$launch_agent" >/dev/null 2>&1 || true
-        elif [[ "$docker_was_running" = "true" && -n "$docker_container" ]]; then
-            docker start "$docker_container" >/dev/null 2>&1 || true
         fi
     fi
     cleanup_candidate
@@ -211,11 +246,12 @@ start_candidate() {
         DWS_SERVICE_LISTEN_ADDR="127.0.0.1:8003" \
         DWS_SERVICE_PROFILE_FILE="${candidate_dir}/profile" \
         DWS_SERVICE_TOKEN_FILE="$token_file" \
-        DWS_SERVICE_WRAPPER_PATH="$wrapper_path" \
         DWS_SERVICE_COMMAND_TIMEOUT="30s" \
         DWS_SERVICE_MAX_BODY_BYTES="1048576" \
-        DWS_SERVICE_MAX_OUTPUT_BYTES="16777216" \
-        "$release_binary" \
+        DWS_CONFIG_DIR="$config_dir" \
+        DWS_KEYCHAIN_DIR="$keychain_dir" \
+        DINGTALK_DWS_AGENTCODE="$agent_code" \
+        "$release_daemon" \
         >"${candidate_dir}/stdout.log" \
         2>"${candidate_dir}/stderr.log" &
     candidate_pid=$!
@@ -296,22 +332,13 @@ if [[ -f "$profile_file" ]]; then
     cp -p "$profile_file" "${candidate_dir}/profile.previous"
 fi
 
-docker_container="$(
-    docker ps -aq \
-        --filter 'label=com.docker.compose.project=dws' \
-        --filter 'label=com.docker.compose.service=dws' |
-        head -1
-)"
-if [[ -n "$docker_container" ]] && [[ "$(docker inspect -f '{{.State.Running}}' "$docker_container")" = "true" ]]; then
-    docker_was_running="true"
-fi
-
 python3 - "$template_path" "${candidate_dir}/launch-agent.plist" \
-    "$current_link" "$profile_file" "$token_file" "$wrapper_path" "$log_dir" "$user_temp_dir" <<'PY'
+    "$current_link" "$profile_file" "$token_file" "$config_dir" "$keychain_dir" \
+    "$agent_code" "$log_dir" "$user_temp_dir" <<'PY'
 from pathlib import Path
 import sys
 
-source, target, current, profile, token, wrapper, logs, tmpdir = sys.argv[1:]
+source, target, current, profile, token, config, keychain, agent_code, logs, tmpdir = sys.argv[1:]
 text = Path(source).read_text(encoding="utf-8")
 replacements = {
     "__DWS_BINARY__": f"{current}/dwsd",
@@ -319,7 +346,9 @@ replacements = {
     "__DWS_HOME__": "/Users/yuanzhan",
     "__DWS_PROFILE_FILE__": profile,
     "__DWS_TOKEN_FILE__": token,
-    "__DWS_WRAPPER_PATH__": wrapper,
+    "__DWS_CONFIG_DIR__": config,
+    "__DWS_KEYCHAIN_DIR__": keychain,
+    "__DWS_AGENT_CODE__": agent_code,
     "__DWS_TMPDIR__": tmpdir,
     "__DWS_STDOUT_LOG__": f"{logs}/stdout.log",
     "__DWS_STDERR_LOG__": f"{logs}/stderr.log",
@@ -334,9 +363,6 @@ plutil -lint "${candidate_dir}/launch-agent.plist" >/dev/null
 
 cutover_started="true"
 launchctl bootout "$service_target" >/dev/null 2>&1 || true
-if [[ "$docker_was_running" = "true" ]]; then
-    docker stop --time 30 "$docker_container" >/dev/null
-fi
 
 install -m 0600 "${candidate_dir}/profile" "$profile_file"
 replace_symlink "$release_dir" "$current_link"
@@ -348,5 +374,7 @@ verify_http_contract 8002 || fail "deployed DWS HTTP contract verification faile
 
 cutover_complete="true"
 printf 'DWS_DEPLOYED_GIT_SHA=%s\n' "$git_sha"
-printf 'DWS_DEPLOYED_BINARY_SHA256=%s\n' "$deployed_binary_sha"
+printf 'DWS_DEPLOYED_DAEMON_SHA256=%s\n' "$deployed_daemon_sha"
+printf 'DWS_DEPLOYED_CLI_SHA256=%s\n' "$deployed_cli_sha"
 printf 'DWS_DEPLOYED_PROFILE=%s\n' "$profile"
+printf 'DWS_DEPLOYED_AGENT_CODE=%s\n' "$agent_code"

@@ -18,12 +18,15 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/cli"
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/commandservice"
 	apperrors "github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/errors"
-	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/hostcli"
 )
+
+const maxProfileSelectorBytes = 255
 
 type CommandService interface {
 	Metadata() commandservice.Metadata
@@ -220,7 +223,7 @@ func (s *Server) handleExecute(writer http.ResponseWriter, request *http.Request
 			return
 		}
 		profile = providedProfile
-		if err := hostcli.ValidateProfileSelector(profile); err != nil {
+		if err := validateProfileSelector(profile); err != nil {
 			s.writeError(writer, request, http.StatusBadRequest, errorPayload{
 				Code:    commandservice.CodeInvalidArguments,
 				Message: "profile must identify exactly one valid profile",
@@ -242,6 +245,24 @@ func (s *Server) handleExecute(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	s.writeData(writer, request, http.StatusOK, result)
+}
+
+func validateProfileSelector(value string) error {
+	if value == "" || strings.TrimSpace(value) != value {
+		return errors.New("profile selector must not be blank or contain surrounding whitespace")
+	}
+	if !utf8.ValidString(value) || len(value) > maxProfileSelectorBytes {
+		return errors.New("profile selector is invalid or too long")
+	}
+	if strings.Contains(value, ",") {
+		return errors.New("profile selector must identify exactly one profile")
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) {
+			return errors.New("profile selector contains a control character")
+		}
+	}
+	return nil
 }
 
 func (s *Server) writeMappedError(writer http.ResponseWriter, request *http.Request, command string, err error) {

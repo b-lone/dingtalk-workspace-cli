@@ -17,19 +17,15 @@ const (
 	defaultListenAddress  = ":8080"
 	defaultCommandTimeout = 30 * time.Second
 	defaultMaxBodyBytes   = int64(1 << 20)
-	defaultMaxOutputBytes = int64(16 << 20)
 	maxMaxBodyBytes       = int64(16 << 20)
-	maxMaxOutputBytes     = int64(64 << 20)
 )
 
 type Config struct {
 	ListenAddress  string
 	Profile        string
-	WrapperPath    string
 	Token          []byte
 	CommandTimeout time.Duration
 	MaxBodyBytes   int64
-	MaxOutputBytes int64
 }
 
 func LoadConfigFromEnvironment() (Config, error) {
@@ -51,10 +47,6 @@ func LoadConfigFromEnvironment() (Config, error) {
 	if len(token) < 32 {
 		return Config{}, fmt.Errorf("DWS service token must contain at least 32 bytes")
 	}
-	wrapperPath, err := executableEnvironment("DWS_SERVICE_WRAPPER_PATH")
-	if err != nil {
-		return Config{}, err
-	}
 	commandTimeout, err := durationEnvironment("DWS_SERVICE_COMMAND_TIMEOUT", defaultCommandTimeout)
 	if err != nil {
 		return Config{}, err
@@ -66,43 +58,13 @@ func LoadConfigFromEnvironment() (Config, error) {
 	if maxBodyBytes > maxMaxBodyBytes {
 		return Config{}, fmt.Errorf("DWS_SERVICE_MAX_BODY_BYTES must not exceed %d", maxMaxBodyBytes)
 	}
-	maxOutputBytes, err := int64Environment("DWS_SERVICE_MAX_OUTPUT_BYTES", defaultMaxOutputBytes)
-	if err != nil {
-		return Config{}, err
-	}
-	if maxOutputBytes > maxMaxOutputBytes {
-		return Config{}, fmt.Errorf("DWS_SERVICE_MAX_OUTPUT_BYTES must not exceed %d", maxMaxOutputBytes)
-	}
 	return Config{
 		ListenAddress:  listenAddress,
 		Profile:        string(profile),
-		WrapperPath:    wrapperPath,
 		Token:          token,
 		CommandTimeout: commandTimeout,
 		MaxBodyBytes:   maxBodyBytes,
-		MaxOutputBytes: maxOutputBytes,
 	}, nil
-}
-
-func executableEnvironment(name string) (string, error) {
-	path := strings.TrimSpace(os.Getenv(name))
-	if path == "" {
-		return "", fmt.Errorf("%s is required", name)
-	}
-	if !filepath.IsAbs(path) {
-		return "", fmt.Errorf("%s must be an absolute path", name)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return "", fmt.Errorf("inspect %s: %w", name, err)
-	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
-		return "", fmt.Errorf("%s must reference an executable regular file", name)
-	}
-	if info.Mode().Perm()&0o022 != 0 {
-		return "", fmt.Errorf("%s must not be writable by group or others", name)
-	}
-	return path, nil
 }
 
 func validateListenAddress(address string) error {

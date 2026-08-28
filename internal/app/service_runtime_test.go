@@ -4,6 +4,7 @@
 package app
 
 import (
+	"sort"
 	"testing"
 	"time"
 
@@ -27,6 +28,9 @@ func TestHTTPCommandServiceSurfaceUsesEmbeddedSchemaAndStaticEndpoints(t *testin
 		Index:       schema.Index,
 		Runner:      executor.EchoRunner{},
 		Allow: func(tool cli.ToolSpec) bool {
+			if _, ok := infinityHTTPReadCommands[tool.Identity.CanonicalPath]; !ok {
+				return false
+			}
 			ref := tool.Interface.Ref
 			if ref == nil {
 				return false
@@ -38,8 +42,26 @@ func TestHTTPCommandServiceSurfaceUsesEmbeddedSchemaAndStaticEndpoints(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if service.Metadata().CommandCount < 100 {
-		t.Fatalf("HTTP command count = %d, want at least 100", service.Metadata().CommandCount)
+	want := []string{
+		"calendar.list_calendar_events",
+		"calendar.list_calendars",
+		"chat.get_conversation_info",
+		"contact.get_current_user_profile",
+		"contact.search_contact_by_key_word",
+		"todo.get_user_todos_in_current_org",
+	}
+	got := make([]string, 0, len(service.ListCommands()))
+	for _, command := range service.ListCommands() {
+		got = append(got, command.CanonicalPath)
+	}
+	sort.Strings(got)
+	if len(got) != len(want) {
+		t.Fatalf("HTTP commands = %v, want %v", got, want)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("HTTP commands = %v, want %v", got, want)
+		}
 	}
 	if _, err := service.Command("contact.get_current_user_profile"); err != nil {
 		t.Fatalf("current-user read command is not exposed: %v", err)

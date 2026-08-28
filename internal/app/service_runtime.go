@@ -52,8 +52,18 @@ func loadHTTPServiceProfile(configDir, selector string) (httpServiceProfile, err
 	return httpServiceProfile{corpID: corpID, tokenData: tokenData}, nil
 }
 
-// NewHTTPCommandService builds the direct embedded Core runtime. The trusted
-// host dwsd entrypoint uses NewHostHTTPCommandService instead.
+var infinityHTTPReadCommands = map[string]struct{}{
+	"calendar.list_calendar_events":     {},
+	"calendar.list_calendars":            {},
+	"chat.get_conversation_info":         {},
+	"contact.get_current_user_profile":   {},
+	"contact.search_contact_by_key_word": {},
+	"todo.get_user_todos_in_current_org": {},
+}
+
+// NewHTTPCommandService builds the self-contained DWS Core runtime used by
+// dwsd. It reads only the service-owned profile and credential state and does
+// not execute a desktop-product wrapper.
 func NewHTTPCommandService(ctx context.Context, profile string, timeout time.Duration) (*commandservice.Service, error) {
 	profile = strings.TrimSpace(profile)
 	if profile == "" {
@@ -134,6 +144,9 @@ func NewHTTPCommandService(ctx context.Context, profile string, timeout time.Dur
 			return nil
 		},
 		Allow: func(tool cli.ToolSpec) bool {
+			if _, ok := infinityHTTPReadCommands[tool.Identity.CanonicalPath]; !ok {
+				return false
+			}
 			ref := tool.Interface.Ref
 			if ref == nil {
 				return false

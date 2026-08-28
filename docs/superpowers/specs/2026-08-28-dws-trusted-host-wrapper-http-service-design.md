@@ -2,7 +2,9 @@
 
 日期：2026-08-28
 
-状态：方向已确认，待文档复核后实施
+状态：已废弃
+
+> 该方案曾通过 `~/.qoderwork/bin/dws` 提供企业身份，现已被自包含的 DWSService 架构替代。当前事实以 [`docs/architecture.md`](../../architecture.md) 为准：`dwsd` 内嵌 DWS Core，认证状态归 DWSService 所有，不再依赖 QoderWork、千问办公 wrapper 或桌面进程。
 
 ## 结论
 

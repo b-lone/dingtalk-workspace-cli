@@ -32,14 +32,16 @@
         <string>__DWS_PROFILE_FILE__</string>
         <key>DWS_SERVICE_TOKEN_FILE</key>
         <string>__DWS_TOKEN_FILE__</string>
-        <key>DWS_SERVICE_WRAPPER_PATH</key>
-        <string>__DWS_WRAPPER_PATH__</string>
         <key>DWS_SERVICE_COMMAND_TIMEOUT</key>
         <string>30s</string>
         <key>DWS_SERVICE_MAX_BODY_BYTES</key>
         <string>1048576</string>
-        <key>DWS_SERVICE_MAX_OUTPUT_BYTES</key>
-        <string>16777216</string>
+        <key>DWS_CONFIG_DIR</key>
+        <string>__DWS_CONFIG_DIR__</string>
+        <key>DWS_KEYCHAIN_DIR</key>
+        <string>__DWS_KEYCHAIN_DIR__</string>
+        <key>DINGTALK_DWS_AGENTCODE</key>
+        <string>__DWS_AGENT_CODE__</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>
