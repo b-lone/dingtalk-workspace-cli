@@ -4,7 +4,7 @@
 
 状态：已废弃
 
-> 该方案曾通过 `~/.qoderwork/bin/dws` 提供企业身份，现已被自包含的 DWSService 架构替代。后续验证确认，原 Wrapper 与裸 Core 的有效差异是已登记 `DWS_CHANNEL`；当前事实以 [`docs/architecture.md`](../../architecture.md) 为准：`dwsd` 内嵌 DWS Core，认证状态归 DWSService 所有，并在登录与业务请求中显式使用同一渠道码，不再依赖 QoderWork、千问办公 wrapper 或桌面进程。
+> 该方案曾通过 `~/.qoderwork/bin/dws` 提供企业身份，现已被自包含的 Docker DWSService 架构替代。后续验证确认，原 Wrapper 与裸 Core 的有效差异是已登记 `DWS_CHANNEL`；当前事实以 [`docs/architecture.md`](../../architecture.md) 为准：`dwsd` 在 Linux arm64 容器内运行 DWS Core，认证状态归容器挂载的 DWSService state 所有，并在登录与业务请求中显式使用同一渠道码，不再依赖 QoderWork、千问办公 wrapper、LaunchAgent 或桌面进程。
 
 ## 结论
 

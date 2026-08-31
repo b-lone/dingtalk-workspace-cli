@@ -13,6 +13,7 @@ services:
       LANG: C.UTF-8
       LC_ALL: C.UTF-8
       TZ: Asia/Shanghai
+      DWS_CHANNEL: ${DWS_CHANNEL:?DWS_CHANNEL is required}
       DWS_CONFIG_DIR: /var/lib/dws/config
       DWS_KEYCHAIN_DIR: /var/lib/dws/keychain
       DWS_SERVICE_LISTEN_ADDR: :8080

@@ -13,44 +13,22 @@
 7. The embedded Catalog is a downstream release artifact and never backfills identity or participates in regeneration. Stable flag-to-interface property bindings come from the reviewed, content-addressed v3 manifest in `schema_parameter_bindings.json`; its exact active tuples, corrections, removals, and mapping exclusions are validated against the final bound `SchemaRegistry`. CLI `required` and constraints come from the resolved typed contract, while MCP `required` remains interface-only metadata.
 8. Agent selection results are fixed in versioned review inputs. Every public tool has explicit use/avoid/example and interface disposition metadata; Skill references that are not current leaves require an explicit alias/group/stale/out-of-surface review instead of fuzzy runtime matching.
 
-## Self-Contained Host HTTP Service
+## Self-Contained Docker HTTP Service
 
-`dwsd` is a Snow-hosted loopback HTTP adapter for Infinity. It runs the DWS Core in-process and exposes only the six reviewed Infinity read commands. It does not invoke a QoderWork or QwenWork binary and does not depend on either desktop process, installation directory, login lifecycle, or update lifecycle.
+`dwsd` is a Snow-hosted HTTP adapter for Infinity. It runs the DWS Core in-process and exposes only the six reviewed Infinity read commands. It does not invoke a QoderWork or QwenWork binary and does not depend on either desktop process, installation directory, login lifecycle, or update lifecycle.
 
-The daemon runs as the Snow login user under the `com.alibaba.dws-http` LaunchAgent and binds to `127.0.0.1:8002`. Immutable releases live under `~/Library/Application Support/DWSService/releases/<git-sha>` and contain both `dwsd` and the same-revision `dws` management CLI. The `current` symlink selects one complete release atomically.
+The daemon runs as the non-root `dws` user in the `dws` Docker Compose service. The Linux arm64 image contains the same-revision `dwsd` daemon and `dws` management CLI, is published by immutable digest, and carries the exact Git revision in `org.opencontainers.image.revision`. Snow port 8002 maps to container port 8080 for the Infinity caller.
 
 Service-owned state is isolated from desktop products:
 
-- `DWSService/state/config` owns the profile registry and DWS configuration.
-- `DWSService/state/keychain` owns the encrypted credential files; the macOS Keychain remains the DEK backend.
-- `DWSService/secrets` owns only the HTTP Bearer and default profile selector.
-- `DWS_CHANNEL` is the required registered DingTalk channel identity used by login and every business request.
-- `DINGTALK_DWS_AGENTCODE` is an explicit deployment input for the DWSService identity.
+- `/Users/yuanzhan/Documents/Data/dws-service/state` is mounted at `/var/lib/dws` and owns the profile registry, configuration, encrypted credentials, and Linux file-DEK.
+- `/Users/yuanzhan/Documents/Data/dws-service/secrets` is mounted read-only at `/run/secrets` and owns only the HTTP Bearer and default profile selector.
+- `DWS_CHANNEL` is a required Compose input and is used by login and every business request.
+- `DINGTALK_DWS_AGENTCODE` is the fixed DWSService identity.
 
-Each HTTP request is validated against the embedded `ToolSpec`. The request `profile` selects one registered corpId for that invocation; an omitted profile uses the 0600 default profile file. Profile selection and credential refresh remain serialized inside the process. There is no wrapper, shell, generic argv boundary, or desktop-product fallback.
+Each HTTP request is validated against the embedded `ToolSpec`. The request `profile` selects one registered corpId for that invocation; an omitted profile uses the 0600 default profile file. Profile selection and credential refresh remain serialized inside the process. There is no wrapper, shell, generic argv boundary, LaunchAgent, or desktop-product fallback.
 
-The bundled CLI is used only for explicit service authentication and maintenance:
-
-```bash
-scripts/dws-service-auth.sh \
-  --channel-code 51d4ceade40174304fc591dbf17448aeebf50328 \
-  --agent-code dws-http-service \
-  login --device
-```
-
-The first deployment must initialize the service-owned login state before candidate startup. Use the same-revision CLI build explicitly when `current/dws` does not exist yet, then select the target organization in the device authorization page:
-
-```bash
-DWS_SERVICE_CLI_BINARY=/absolute/path/to/dws \
-scripts/dws-service-auth.sh \
-  --channel-code 51d4ceade40174304fc591dbf17448aeebf50328 \
-  --agent-code dws-http-service \
-  login --device
-```
-
-After the first login, deployment uses the returned corpId as `--profile`. A later re-authorization may pass that registered corpId to `dws auth login --profile` explicitly.
-
-Jenkins Job `donut-deploy-dws` is the only deployment owner. It supplies the registered channel code to login and runtime, builds `dwsd` and `dws` from the same Git revision, stages one immutable release, verifies a candidate on port 8003, then atomically switches the LaunchAgent on port 8002. Only the previous immutable host release is eligible for rollback; Docker and desktop-product binaries are not runtime or rollback dependencies.
+Jenkins Job `donut-deploy-dws` is the only deployment owner. It checks out one exact Git revision, builds and publishes the Linux arm64 image, resolves its registry digest, and deploys that digest through Docker Compose. `scripts/deploy-dws-docker.sh` makes the registered channel explicit, requires `/healthz`, `/readyz`, the six-command Schema, the selected organization identity, and the target group query to pass, and restores the previous successful Docker image when post-deployment business verification fails. A successful release leaves exactly one Docker runtime on port 8002; host binaries and LaunchAgent state are not runtime or rollback dependencies.
 
 ## Repository Structure
 
